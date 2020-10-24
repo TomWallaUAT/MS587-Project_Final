@@ -8,6 +8,7 @@
 --	Change Date -INIT- Description of Change
 --=========================================================================================================
 --	10/04/2020 - TCW - INITIAL CREATION OF FUNCTION SCRIPT
+--	10/15/2020 - TCW - ADDED 2 NEW FUNCTIONS (CommonCodeTXT, AppSettingValue)
 --
 */
 
@@ -20,6 +21,111 @@ SET ANSI_NULLS ON
 GO
 SET QUOTED_IDENTIFIER ON
 GO
+
+--CREATE OR ALTER FOR NEW INLINE FUNCTION
+CREATE OR ALTER FUNCTION dbo.fnc_GetSecurityQuestion (@SEC_QUEST_ID tinyint)
+RETURNS varchar(255)
+AS BEGIN
+	/* ----------------------------------------------------------------------------
+	Returns and Security Question based on ID lookup
+	---------------------------------------------------------------------------- */
+	declare @valRet as varchar(255) = 0
+	
+	SET @valRet = (Select SQ.SEC_QUEST_TXT FROM dbo.SECURITY_QUESTIONS SQ WITH (NOLOCK) WHERE SQ.SEC_QUEST_ID = @SEC_QUEST_ID)
+
+	RETURN @valRet
+END
+Go
+
+
+--CREATE OR ALTER FOR NEW INLINE FUNCTION
+CREATE OR ALTER FUNCTION dbo.fnc_CheckUserIDExist (@USR varchar(60))
+RETURNS bit
+AS BEGIN
+	/* ----------------------------------------------------------------------------
+	Checks the USERS table to see if a particular Username already exists 
+	(1 = Exists and	0 = Does not Exists)
+	---------------------------------------------------------------------------- */
+	declare @valRet as bit = 0
+	
+	--Decrypt and Compares value
+	Select @valRet = CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END FROM dbo.USERS U WITH (NOLOCK) WHERE UPPER(U.USER_ID) = UPPER(@USR)
+
+	RETURN @valRet
+END
+Go
+
+
+--CREATE OR ALTER FOR NEW INLINE FUNCTION
+CREATE OR ALTER FUNCTION dbo.fnc_CheckEmailExist (@Email varchar(60))
+RETURNS bit
+AS BEGIN
+	/* ----------------------------------------------------------------------------
+	Checks the USERS table to see if a particular email already exists 
+	(1 = Exists and	0 = Does not Exists)
+	---------------------------------------------------------------------------- */
+	declare @valRet as bit = 0
+	
+	--Decrypt and Compares value
+	Select @valRet = CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END FROM dbo.USERS WITH (NOLOCK) WHERE UPPER(CONVERT(varchar(60),DECRYPTBYKEYAUTOASYMKEY(ASYMKEY_ID('SLOCDB_AsymKey'), NULL, USER_EMAIL))) = UPPER(@Email)
+
+	--IF NOT USING ENCRYPTION THEN USE THIS LINE BELOW (BE SURE TO UNCOMMENT IT AND COMMENT OUT THE OTHER LINE ABOVE)
+	--Select @valRet = CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END FROM dbo.USERS WITH (NOLOCK) WHERE UPPER(USER_EMAIL) = UPPER(@Email)
+
+	RETURN @valRet
+END
+Go
+
+
+--CREATE OR ALTER FOR NEW INLINE FUNCTION
+CREATE OR ALTER FUNCTION dbo.fnc_CommonCodeTXT (@COMM_CD char(8), @COMM_TYPE_CD CHAR(8))
+RETURNS varchar(100)
+AS BEGIN
+	/* ----------------------------------------------------------------------------
+	Turns and Common Code and Common Type Code Name into an Common Text Value 
+	(Looks up the COMM_CD and COMM_TYPE_CD)
+	---------------------------------------------------------------------------- */
+	declare @valRet as varchar(100) = null
+	
+	SET @valRet = (Select CC.COMM_TXT FROM dbo.COMMON_CODES CC WITH (NOLOCK) WHERE CC.COMM_CD = @COMM_CD AND CC.COMM_TYPE_CD = @COMM_TYPE_CD)
+
+	RETURN @valRet
+END
+Go
+
+
+--CREATE OR ALTER FOR NEW INLINE FUNCTION
+CREATE OR ALTER FUNCTION dbo.fnc_PortToText (@PRT_TYP_ID tinyint)
+RETURNS varchar(25)
+AS BEGIN
+	/* ----------------------------------------------------------------------------
+	Turns and Common Code and Common Type Code Name into an Common Text Value 
+	(Looks up the COMM_CD and COMM_TYPE_CD)
+	---------------------------------------------------------------------------- */
+	declare @valRet as varchar(25) = null
+	
+	SET @valRet = (Select PT.PRT_TXT FROM dbo.PORT_TYPES PT WITH (NOLOCK) WHERE @PRT_TYP_ID = PT.PRT_TYP_ID)
+
+	RETURN @valRet
+END
+Go
+
+
+--CREATE OR ALTER FOR NEW INLINE FUNCTION
+CREATE OR ALTER FUNCTION dbo.fnc_AppSettingValue (@APP_KEY char(8))
+RETURNS varchar(255)
+AS BEGIN
+	/* ----------------------------------------------------------------------------
+	Takes in an APP_KEY that is stored in APP_Defautls table and returns the 
+	APP_VALUE (Looks up the APP_KEY by Name)
+	---------------------------------------------------------------------------- */
+	declare @valRet as varchar(255) = null
+	
+	SET @valRet = (Select AD.APP_VALUE FROM dbo.APP_DEFAULTS AD WITH (NOLOCK) WHERE AD.APP_KEY = @APP_KEY)
+
+	RETURN @valRet
+END
+Go
 
 
 --CREATE OR ALTER FOR NEW INLINE FUNCTION
@@ -37,7 +143,7 @@ AS BEGIN
 END
 Go
 
-
+--CREATE OR ALTER FOR NEW INLINE FUNCTION
 CREATE OR ALTER FUNCTION [dbo].[fnc_ProperCase] (@Text as varchar(max))
 RETURNS varchar(max) 
 as
@@ -83,7 +189,7 @@ BEGIN
 END
 GO
 
-
+--CREATE OR ALTER FOR NEW INLINE FUNCTION
 CREATE OR ALTER	function [dbo].[fnc_FormatPhone](@Phone varchar(30)) 
 returns	varchar(30)
 As
@@ -121,25 +227,29 @@ end
 GO
 
 
-
+--CREATE OR ALTER FOR NEW INLINE FUNCTION
 CREATE OR ALTER FUNCTION [dbo].[fnc_StripSpcChars] (@Text as varchar(8000))
 RETURNS varchar(8000)
 as
 BEGIN
 	/* ----------------------------------------------------------------------------
-	Strips out bad characters like ! @ # $ ^ * : ; ? /\ |  
+	Strips out bad characters like ! @ # $ ^ * ; ? \ |  
 	---------------------------------------------------------------------------- */
 	declare @Ret varchar(8000);
 	declare @i int;
 	declare @c char(1);
 	
 	select @i =1, @Ret='';
-	
+
+
 	While (@i <= LEN(@text))
 		select 
 			@c=SUBSTRING(@Text,@i,1),
-			@Ret = @Ret + case when @c like '[!@#$^*;:?/\|]' then '' else @c end,
+			@Ret = @Ret + case when @c like '[!@#$^*;?\|]' then '' else @c end,
 			@i = @i +1
-		Return LTrim(RTRIM(@Ret))
+
+	Return LTrim(RTRIM(@Ret))
+
+
 END
 GO

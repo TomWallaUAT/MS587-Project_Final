@@ -33,6 +33,7 @@ VALUES
 	,('DEVICE_ATTR_ADD','A new Device Attribute has been added.')
 	,('DEVICE_ATTR_UPD','A Device Attribute has been updated.')
 	,('DEVICE_ATTR_DEL','A Device Attribute has been deleted.')
+	,('DEV_LNK_ERR','A Device Layout Linking Error,')
 	,('PORT_ERR','Error occured during port entry or update.')
 	,('PORT_ADD','A new Port has been added.')
 	,('PORT_UPD','A Port has been updated.')
@@ -47,9 +48,10 @@ VALUES
 	,('LAYOUT_DEL','A Layout has been deleted.')
 	,('AUTH_SUCCESS','A Successful Authentication was encountered (Login)')
 	,('AUTH_FAILURE','A Failed Authentication was encountered (Login)')
-	,('AUTH_NEW','A new Authentication account was created (New Login)')
-	,('AUTH_DEL','A Authentication account was Deleted')
-	,('AUTH_UPD','A Authentication account was Updated')
+	,('USER_NEW','A new Authentication account was created (New Login)')
+	,('USER_DEL','A Authentication account was Deleted')
+	,('USER_UPD','A Authentication account was Updated')
+	,('USER_ERR','A Error was encountered trying to add a new account.')
 
 
 --WIPE TABLE AND RE-INSERT VALUES
@@ -72,8 +74,8 @@ INSERT INTO dbo.COMMON_CODES (COMM_CD, COMM_TYPE_CD, COMM_TXT, COMM_DESC)
 VALUES
 	('F','PRT_GNDR','Female','Female Plug Gender')
 	,('M','PRT_GNDR','Male','Male Plug Gender')
-	,('I','PORT_DIR','Inbound','Communication type Inbound Direction')
-	,('O','PORT_DIR','Outbound','Communication type Outbound Direction')
+	,('I','PORT_DIR','Input','Communication type Inbound Direction')
+	,('O','PORT_DIR','Output','Communication type Outbound Direction')
 	,('B','PORT_DIR','Bi-Directional','Communication type Bi-Directional Direction')
 	,('P','VRFY_PRF','Phone','Verification Preference Phone/Text')
 	,('E','VRFY_PRF','Email','Verification Preference Email')
@@ -91,10 +93,17 @@ VALUES
 	,('PRT_GNDR','PRT_ATTR','Port Gender','Attribute Key for Port Gender')
 	,('PRT_DESC','PRT_ATTR','Description','Attribute Key for Port Desc')
 	,('PRTDEVID','PRT_ATTR','To Device','Attribute Key for Port Assigned to Device')
+	,('PRT_ASSN','PRT_ATTR','Port Config Key','Assignment key for PRT_CFG_ID and PRT_ID')
 	,('NO_IMAGE','APP_DFLT','Default Image','Application Default for NO IMAGE image')
 	,('PG_TITLE','APP_DFLT','Default Title','Application Default for Document TITLE')
 	,('SFTDELVL','APP_DFLT','Soft Delete Days','Application Default for how many days to keep soft deletes before purging')
-	
+	,('PRT_CHAN','APP_DFLT','Default Value','Default value used for setting Port Channel attribute')
+	,('PRT_NAME','APP_DFLT','Default Value','Default value used for setting Port NAME attribute')
+	,('PRT_DESC','APP_DFLT','Default Value','Default value used for setting Port Descriptino Attribute')
+	,('PRT_GNDR','APP_DFLT','Default Value','Default value used for setting Port plug gender in Attributes')
+	,('PRTDEVID','APP_DFLT','Default Value','Default value used for new ports attributes (0) where device is not assigned')
+	,('MAX_FAIL','APP_DFLT','Default Value','Default value used for new Maximum Failed login attempts before Account is locked')
+	,('WAITTIME','APP_DFLT','Default Value','Default value used for Wait time between locked and failed logins')
 
 --WIPE TABLE AND RE-INSERT VALUES
 TRUNCATE TABLE dbo.DEVICE_TYPES
@@ -142,7 +151,7 @@ INSERT INTO dbo.PORT_TYPES (PRT_TXT, PRT_TYP_DESC)
 VALUES
 	('1/4','1/4" TS/TRS')
 	,('3/8','3/8" TS/TRS/CV')
-	,('HeadPhones','Any Connected Headphone Device')
+	,('HeadPhones','Headphone/Reference')
 	,('XLR','XLR')
 	,('Combo','XLR or 1/4" combo port')
 	,('AES','AES Expansion Port')
@@ -173,9 +182,16 @@ VALUES
 --WIPE TABLE AND RE-INSERT VALUES  
 TRUNCATE TABLE dbo.APP_DEFAULTS
 
---INSERT APP DEFAULTS (Has to be ran under Windows Account not as SA or you get a access denied)
+--INSERT APP DEFAULTS (Has to be ran under Windows Account not as SA or you get a access denied) 
 INSERT INTO dbo.APP_DEFAULTS (APP_KEY, APP_VALUE, APP_BIN_VALUE)
 Select 'NO_IMAGE' as APP_KEY,'NO IMAGE' as APP_VALUE, BulkColumn as APP_BIN_VALUE from OPENROWSET(BULK N'C:\Users\TBAZ7\OneDrive\Documents\School\UAT\MS587\Assignment_Final\IMAGES\NIA.png', SINGLE_BLOB) image UNION
 Select 'PG_TITLE' as APP_KEY,'Studio Layout Companion' as APP_VALUE, null as APP_BIN_VALUE union
-select 'SFTDELVL' as APP_KEY,'30' as APP_VALUE, null as APP_BIN_VALUE 
-
+select 'SFTDELVL' as APP_KEY,'30' as APP_VALUE, null as APP_BIN_VALUE union
+select 'PRT_CHAN' as APP_KEY,'@VAL' as APP_VALUE, null as APP_BIN_VALUE union
+select 'PRT_NAME' as APP_KEY,'CH @VAL' as APP_VALUE, null as APP_BIN_VALUE union
+select 'PRT_DESC' as APP_KEY,'@PT @CT Channel @VAL' as APP_VALUE, null as APP_BIN_VALUE union
+select 'PRT_GNDR' as APP_KEY,'F' as APP_VALUE, null as APP_BIN_VALUE union
+select 'PRTDEVID' as APP_KEY,'0' as APP_VALUE, null as APP_BIN_VALUE union
+select 'PRT_ASSN' as APP_KEY,'0' as APP_VALUE, null as APP_BIN_VALUE union
+select 'MAX_FAIL' as APP_KEY, '5' as APP_VALUE, null as APP_BIN_VALUE union
+select 'WAITTIME' as APP_KEY, '5' as APP_VALUE, null as APP_BIN_VALUE
