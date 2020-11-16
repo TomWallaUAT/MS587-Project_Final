@@ -218,7 +218,9 @@ DROP TABLE IF EXISTS [dbo].[PORT_TYPES]
 CREATE TABLE dbo.PORT_TYPES (
 	PRT_TYP_ID tinyint identity(1,1) not null,
 	PRT_TXT varchar(25) not null,
+	PRT_ALT_TXT varchar(50) null,
 	PRT_TYP_DESC varchar(100) not null,
+	PRT_CAT_CD CHAR(8) not null,
 	REC_CRTE_TS datetime default(getDate()) not null,
 	REC_CRTE_USER_ID varchar(60) default(user_name()) not null,
 	LST_UPDT_TS datetime default(getDate()) not null,
@@ -252,7 +254,6 @@ GO
 
 --IF TABLE EXISTS DROP IT SO THAT IT CAN BE RECREATED
 DROP TABLE IF EXISTS [dbo].[DEVICES]
-GO
 
 --CREATE TABLE FOR DEVICES (HAS DEFAULTS AND KEY)
 CREATE TABLE dbo.DEVICES (
@@ -275,7 +276,7 @@ CREATE TABLE dbo.DEVICES (
 		[DEV_ID] ASC
 	)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
 ) ON [PRIMARY]
-GO
+
 
 
 --IF TABLE EXISTS DROP IT SO THAT IT CAN BE RECREATED
@@ -298,7 +299,7 @@ CREATE TABLE dbo.DEVICE_EXT_ATTR (
 		[ATTR_KEY_CD] ASC
 	)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
 ) ON [PRIMARY]
-GO
+
 
 
 --IF TABLE EXISTS DROP IT SO THAT IT CAN BE RECREATED
@@ -311,6 +312,7 @@ CREATE TABLE dbo.DEVICE_PORT_CONFIG (
 	PRT_TYP_ID tinyint not null,
 	PRT_DIR_CD CHAR(1) not null, -- "I" for Inbound / "O" for Outbound / "B" Bi-Directional
 	PRT_CNT tinyint not null,
+	PRT_GNDR char(1) null,
 	REC_CRTE_TS datetime default(getDate()) not null,
 	REC_CRTE_USER_ID varchar(60) default(user_name()) not null,
 	LST_UPDT_TS datetime default(getDate()) not null,

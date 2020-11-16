@@ -57,7 +57,7 @@ Go
 
 
 --CREATE OR ALTER FOR NEW INLINE FUNCTION
-CREATE OR ALTER FUNCTION dbo.fnc_CheckEmailExist (@Email varchar(60))
+CREATE OR ALTER FUNCTION dbo.fnc_CheckEmailExist (@Email varchar(60), @IGNORE_UID varchar(60) = '')
 RETURNS bit
 AS BEGIN
 	/* ----------------------------------------------------------------------------
@@ -67,7 +67,10 @@ AS BEGIN
 	declare @valRet as bit = 0
 	
 	--Decrypt and Compares value
-	Select @valRet = CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END FROM dbo.USERS WITH (NOLOCK) WHERE UPPER(CONVERT(varchar(60),DECRYPTBYKEYAUTOASYMKEY(ASYMKEY_ID('SLOCDB_AsymKey'), NULL, USER_EMAIL))) = UPPER(@Email)
+	Select @valRet = CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END 
+	FROM dbo.USERS USR WITH (NOLOCK) 
+	WHERE UPPER(CONVERT(varchar(60),DECRYPTBYKEYAUTOASYMKEY(ASYMKEY_ID('SLOCDB_AsymKey'), NULL, USER_EMAIL))) = UPPER(@Email)
+	AND @IGNORE_UID <> USR.USER_ID
 
 	--IF NOT USING ENCRYPTION THEN USE THIS LINE BELOW (BE SURE TO UNCOMMENT IT AND COMMENT OUT THE OTHER LINE ABOVE)
 	--Select @valRet = CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END FROM dbo.USERS WITH (NOLOCK) WHERE UPPER(USER_EMAIL) = UPPER(@Email)
@@ -82,7 +85,7 @@ CREATE OR ALTER FUNCTION dbo.fnc_CommonCodeTXT (@COMM_CD char(8), @COMM_TYPE_CD 
 RETURNS varchar(100)
 AS BEGIN
 	/* ----------------------------------------------------------------------------
-	Turns and Common Code and Common Type Code Name into an Common Text Value 
+	Turns and Common Code and Common Type Code Name into an Common DESC Value 
 	(Looks up the COMM_CD and COMM_TYPE_CD)
 	---------------------------------------------------------------------------- */
 	declare @valRet as varchar(100) = null
@@ -104,7 +107,7 @@ AS BEGIN
 	---------------------------------------------------------------------------- */
 	declare @valRet as varchar(25) = null
 	
-	SET @valRet = (Select PT.PRT_TXT FROM dbo.PORT_TYPES PT WITH (NOLOCK) WHERE @PRT_TYP_ID = PT.PRT_TYP_ID)
+	SET @valRet = (Select COALESCE(PT.PRT_ALT_TXT,PT.PRT_TXT) AS PORT_TEXT FROM dbo.PORT_TYPES PT WITH (NOLOCK) WHERE @PRT_TYP_ID = PT.PRT_TYP_ID)
 
 	RETURN @valRet
 END

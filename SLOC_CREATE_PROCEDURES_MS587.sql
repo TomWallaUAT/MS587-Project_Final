@@ -10,12 +10,13 @@
 --	10/11/2020 - TCW - INITIAL CREATION OF PROCEDURE SCRIPT
 --	10/15/2020 - TCW - UPDATE PORT and EXT Attr procs. Also completed ADD_Layout and DELETE_Layout Proc
 --  10/16/2020 - TCW - ADDED Procedures for User and User Info table management csp_ADD_User
---  10/16/2020 - TCW - ADDED Procedures for User and User Info table management csp_UPDATE_User
+--  10/16/2020 - TCW - ADDED Procedures for User and User Info table management csp_UPD_User
 --  10/17/2020 - TCW - ADDED Procedures for User and User Info table management csp_DELTE_User_ByEmail
 --  10/17/2020 - TCW - ADDED Procedures for User and User Info table management csp_DELTE_User_ByUserID
 --  10/17/2020 - TCW - ADDED Procedures for User and User Info table management csp_LOGON_User
 --  10/17/2020 - TCW - ADDED Procedures for User and User Info table management csp_VRFY_User
---  10/17/2020 - TCW - ADDED Procedures for User and User Info table management csp_UPDATE_Password
+--  10/17/2020 - TCW - ADDED Procedures for User and User Info table management csp_UPD_Password
+--	10/25/2020 - TCW - UPDATE Renamed procedures to be consistent with csp_ADD, csp_DEL or csp_UPD
 --
 */
 
@@ -24,16 +25,90 @@
 USE SLOC_DB
 Go
 
---SET 
+/** DROP PROCEDURES STATEMENTS (DEBUG USE)
+DROP PROCEDURE IF EXISTS [DBO].[CSP_ADD_DEVICE] 
+DROP PROCEDURE IF EXISTS [DBO].[CSP_ADD_DEVICE_EXT_ATTR] 
+DROP PROCEDURE IF EXISTS [DBO].[CSP_ADD_DEVICE_PORT_ATTR] 
+DROP PROCEDURE IF EXISTS [DBO].[CSP_ADD_DEVICEPORTCONFIG] 
+DROP PROCEDURE IF EXISTS [DBO].[CSP_ADD_LAYOUT] 
+DROP PROCEDURE IF EXISTS [DBO].[CSP_ADD_USER] 
+DROP PROCEDURE IF EXISTS [DBO].[CSP_ADJUST_DEVICEPORTS] 
+DROP PROCEDURE IF EXISTS [DBO].[CSP_DEL_DEVICE] 
+DROP PROCEDURE IF EXISTS [DBO].[CSP_DEL_DEVICEPORTCONFIG] 
+DROP PROCEDURE IF EXISTS [DBO].[CSP_DEL_LAYOUT] 
+DROP PROCEDURE IF EXISTS [DBO].[csp_DEL_USER_BYEMAIL] 
+DROP PROCEDURE IF EXISTS [DBO].[csp_DEL_USER_BYUSERID] 
+DROP PROCEDURE IF EXISTS [DBO].[CSP_LINK_PORTTODEVICE] 
+DROP PROCEDURE IF EXISTS [DBO].[CSP_LOGON_USER] 
+DROP PROCEDURE IF EXISTS [DBO].[CSP_UNDEL_LAYOUT] 
+DROP PROCEDURE IF EXISTS [DBO].[CSP_UNDEL_DEVICE] 
+DROP PROCEDURE IF EXISTS [DBO].[csp_UPD_DEVICE] 
+DROP PROCEDURE IF EXISTS [DBO].[csp_UPD_DEVICE_EXT_ATTR] 
+DROP PROCEDURE IF EXISTS [DBO].[csp_UPD_DEVICE_PORT_ATTR] 
+DROP PROCEDURE IF EXISTS [DBO].[csp_UPD_LAYOUT] 
+DROP PROCEDURE IF EXISTS [DBO].[csp_UPD_PASSWORD]
+DROP PROCEDURE IF EXISTS [DBO].[csp_UPD_USER]
+DROP PROCEDURE IF EXISTS [DBO].[CSP_VRFY_USER]
+*/
+
+
 SET ANSI_NULLS OFF
 GO
 SET QUOTED_IDENTIFIER OFF
 GO
 
+--======================================================
+-- PROCEDURES RELATED TO USER EFFORTS
+--======================================================
+CREATE OR ALTER PROCEDURE [dbo].[csp_CheckLoginAvailable]
+	@USER_INFO		varchar(60),		--USER EMAIL or USER_NAME (EITHER OR)
+	@USER_INFO_TYPE	char(1),			--TYPE = 'E'=Email, 'U'=UserName
+	@IGNORE_UID		varchar(60) = '',	
+	@MSG_OUT		varchar(255) OUTPUT --MSG OUTPUT BACK TO CALLING FUNCTION (ONTOP OF RETURN VALUE),
+AS
+SET NOCOUNT ON
+------------------------------------------------------------------------------------------------------------------
+-- AUTHOR : Thomas Wallace		   DATE: 10/17/2020
+-- PURPOSE: Handles User (Logon Availability) By Email or Username
+------------------------------------------------------------------------------------------------------------------
+-- UPDATES:	
+-- 10/17/2020 - TCW - Intial Creationg of csp_CheckLoginAvailable
+
+------------------------------------------------------------------------------------------------------------------
+DECLARE @ERRMSG as varchar(2048)
+DECLARE @RESULT as INT = 0
+
+/*
+RETURN: RESULT
+	1 = If User Info Item is found (Email or Username, depending on @USER_INFO_TYPE)
+	0 = User INFO is not in system.
+*/
+
+	IF (@USER_INFO_TYPE = 'E') BEGIN
+		--EMAIL CHECK
+		SET @RESULT = dbo.fnc_CheckEmailExist(@USER_INFO, @IGNORE_UID)
+		IF (@RESULT = 1) 
+			SET @MSG_OUT = 'Email address associated with another account...'
+		else
+			SET @MSG_OUT = ''
+	END ELSE BEGIN
+		--USER NAME CHECK
+		SET @RESULT = dbo.fnc_CheckUserIDExist(@USER_INFO)
+		IF (@RESULT = 1) 
+			SET @MSG_OUT = 'Username is not available...'
+		else
+			SET @MSG_OUT = ''
+	END
+
+return (@RESULT)
+GO
+
+
 CREATE OR ALTER PROCEDURE [dbo].[csp_LOGON_User]
 	@USER_NM		varchar(60),		--USER EMAIL or USER_NAME (EITHER OR)
 	@USER_PWD		varchar(40),		--USER EMAIL
-	@MSG_OUT		varchar(255) OUTPUT --MSG OUTPUT BACK TO CALLING FUNCTION (ONTOP OF RETURN VALUE)
+	@MSG_OUT		varchar(255) OUTPUT, --MSG OUTPUT BACK TO CALLING FUNCTION (ONTOP OF RETURN VALUE),
+	@UID_OUT	varchar(60) OUTPUT
 AS
 SET NOCOUNT ON
 ------------------------------------------------------------------------------------------------------------------
@@ -74,7 +149,9 @@ RETURN: RESULT
 			SET @LST_UPDT_USER_ID = @USR
 		else
 			SET @LST_UPDT_USER_ID = USER_NAME()
-
+		
+		--SET DEFAULT VALUE
+		SET @UID_OUT = ''
 
 		--GET APPLICATION DEFAULTS FOR MAX FAIL ATTEMPTS BEFORE LOCKOUT AND MAX WAIT TIME FOR LOCKOUT RESET
 		select @AD_MAX_FAILS = CAST(ISNULL(dbo.fnc_AppSettingValue('MAX_FAIL'),0) as tinyint)
@@ -113,8 +190,10 @@ RETRY_LOGIN:
 			--===================================
 			--USER ID WAS FOUND
 			--===================================
-			
-			IF (@INT_USER_PWD = @USER_PWD AND @INT_USER_LCK = 0) BEGIN
+			SET @UID_OUT = @INT_USER_ID
+
+			--USE COLLATE Latin1_General_CS_AS to make sure password comparison is Case Sensative
+			IF (@INT_USER_PWD COLLATE Latin1_General_CS_AS = @USER_PWD AND @INT_USER_LCK = 0) BEGIN
 				--===================================
 				--GOOD PASSWORD (ACCOUNT NOT LOCKED)
 				--===================================
@@ -159,10 +238,10 @@ RETRY_LOGIN:
 					SELECT @MIN_LEFT = Case when DATEDIFF(minute,GetDate(),DATEADD(minute,@AD_WAIT_TIME,@INT_USER_LCK_DT)) < 0 then 0 else DATEDIFF(minute,GetDate(),DATEADD(minute,@AD_WAIT_TIME,@INT_USER_LCK_DT)) END
 
 					IF (@MIN_LEFT > 0) BEGIN
-						SET @MSG_OUT = 'Account has been locked. Please try again in ' + RTRIM(CAST(@MIN_LEFT as varchar(5))) + ' minute(s).'
+						SET @MSG_OUT = 'Account locked. Please try again in ' + RTRIM(CAST(@MIN_LEFT as varchar(5))) + ' min(s).'
 					END ELSE BEGIN
 						SET @MIN_LEFT = 30
-						SET @MSG_OUT = 'Account has been locked. Please try again in ' + RTRIM(CAST(@MIN_LEFT as varchar(5))) + ' second(s).'
+						SET @MSG_OUT = 'Account locked. Please try again in ' + RTRIM(CAST(@MIN_LEFT as varchar(5))) + ' sec(s).'
 					END
 
 				END ELSE BEGIN
@@ -215,7 +294,7 @@ RETRY_LOGIN:
 			--IF USER DOES NOT EXISTS THROW AN EXCEPTION
 			--============================================
 			SET @MSG = 'Invalid Login and/or Bad Password! ( USER_LOGIN=' + @USER_NM + ' )'
-			SET @MSG_OUT = 'Invalid Login and/or Bad Password!'
+			SET @MSG_OUT = 'Invalid Login!'
 			RAISERROR (@MSG,15,1) 
 		END
 	END TRY
@@ -238,7 +317,7 @@ return (@RESULT)
 GO
 
 
-CREATE OR ALTER PROCEDURE [dbo].[csp_DELETE_User_ByEmail]
+CREATE OR ALTER PROCEDURE [dbo].[csp_DEL_User_ByEmail]
 	@USER_EMAIL		varchar(60),		--USER TO REMOVE BY EMAIL
 	@USR			VARCHAR(60)	= null	--USER MAKING CHANGE
 AS
@@ -248,7 +327,7 @@ SET NOCOUNT ON
 -- PURPOSE: Handles User (DELETE) By Email
 ------------------------------------------------------------------------------------------------------------------
 -- UPDATES:	
--- 10/17/2020 - TCW - Intial Creationg of csp_UPDATE_User_ByEmail
+-- 10/17/2020 - TCW - Intial Creationg of csp_UPD_User_ByEmail
 
 ------------------------------------------------------------------------------------------------------------------
 DECLARE @ERRMSG as varchar(2048)
@@ -269,7 +348,7 @@ BEGIN TRANSACTION
 
 
 		--CHECK TO SEE IF EMAIL OR USERNAME EXISTS IF IT DOES FAIL THE REQUEST
-		Select @usrResult = CAST(dbo.fnc_CheckEmailExist(@USER_EMAIL) as tinyint)
+		Select @usrResult = CAST(dbo.fnc_CheckEmailExist(@USER_EMAIL,'') as tinyint)
 		 
 		IF (@usrResult = 0) BEGIN 
 			--IF USER DOES NOT EXISTS THRU AN EXCEPTION
@@ -323,7 +402,7 @@ return (@RESULT)
 GO
 
 
-CREATE OR ALTER PROCEDURE [dbo].[csp_DELETE_User_ByUserID]
+CREATE OR ALTER PROCEDURE [dbo].[csp_DEL_User_ByUserID]
 	@USER_ID		varchar(60),		--USER TO DELTETE BY USER ID
 	@USR			VARCHAR(60) = null	--USER MAKING CHANGE
 AS
@@ -333,7 +412,7 @@ SET NOCOUNT ON
 -- PURPOSE: Handles User (DELETE) By User ID
 ------------------------------------------------------------------------------------------------------------------
 -- UPDATES:	
--- 10/17/2020 - TCW - Intial Creationg of csp_DELETE_User_ByUserID
+-- 10/17/2020 - TCW - Intial Creationg of csp_DEL_User_ByUserID
 
 ------------------------------------------------------------------------------------------------------------------
 DECLARE @ERRMSG as varchar(2048)
@@ -470,7 +549,7 @@ return (@RESULT)
 GO
 
 
-CREATE OR ALTER PROCEDURE [dbo].[csp_UPDATE_Password]
+CREATE OR ALTER PROCEDURE [dbo].[csp_UPD_Password]
 	@USER_ID		varchar(60),
 	@OLD_USER_PWD	varchar(40),
 	@NEW_USER_PWD	varchar(40),
@@ -483,7 +562,7 @@ SET NOCOUNT ON
 -- PURPOSE: Handles User (UPDATE) - Password Only
 ------------------------------------------------------------------------------------------------------------------
 -- UPDATES:	
--- 10/17/2020 - TCW - Intial Creationg of csp_UPDATE_Password
+-- 10/17/2020 - TCW - Intial Creationg of csp_UPD_Password
 ------------------------------------------------------------------------------------------------------------------
 DECLARE @ERRMSG as varchar(2048)
 DECLARE @MSG as varchar(2048)
@@ -562,7 +641,7 @@ return (@RESULT)
 GO
 
 
-CREATE OR ALTER PROCEDURE [dbo].[csp_UPDATE_User]
+CREATE OR ALTER PROCEDURE [dbo].[csp_UPD_User]
 	@USER_ID		varchar(60),
 	@USER_EMAIL		varchar(60),
 	@SEC_QID_1		TINYINT,
@@ -583,7 +662,7 @@ SET NOCOUNT ON
 -- PURPOSE: Handles User (UPDATE) - Not Password that is a different proc 
 ------------------------------------------------------------------------------------------------------------------
 -- UPDATES:	
--- 10/15/2020 - TCW - Intial Creationg of csp_UPDATE_User
+-- 10/15/2020 - TCW - Intial Creationg of csp_UPD_User
 
 ------------------------------------------------------------------------------------------------------------------
 DECLARE @ERRMSG as varchar(2048)
@@ -717,7 +796,7 @@ BEGIN TRANSACTION
 			SET @REC_CRTE_USER_ID = USER_NAME()
 
 		--CHECK TO SEE IF EMAIL OR USERNAME EXISTS IF IT DOES FAIL THE REQUEST
-		Select @usrResult = (CAST(dbo.fnc_CheckEmailExist(@USER_EMAIL) as tinyint) + CAST(dbo.fnc_CheckUserIDExist(@USER_ID) as tinyint))
+		Select @usrResult = (CAST(dbo.fnc_CheckEmailExist(@USER_EMAIL,@USER_ID) as tinyint) + CAST(dbo.fnc_CheckUserIDExist(@USER_ID) as tinyint))
 		 
 		IF (@usrResult > 0) BEGIN 
 			SET @MSG = 'User ID or Email already exist! ( USER_ID=' + @USER_ID + '  -  USER_EMAIL=' + @USER_EMAIL + ' )'
@@ -772,110 +851,40 @@ return (@RESULT)
 GO
 
 
-CREATE OR ALTER PROCEDURE [dbo].[csp_LINK_PortToDevice]
-	@LO_ID				INT,	
-	@PRT_CFG_ID			INT,
-	@PRT_ID				INT,
-	@ATTR_KEY_CD		CHAR(8),
-	@LNK_PRT_CFG_ID		INT,
-	@LNK_PRT_ID			INT,
-	@LNK_DEV_ID			INT,
-	@USR				VARCHAR(60) = null
+CREATE OR ALTER PROCEDURE [dbo].[csp_GetSecQuestions]
+	@IGNORE_QID1	INT = 0,
+	@IGNORE_QID2	INT = 0
 AS
 SET NOCOUNT ON
 ------------------------------------------------------------------------------------------------------------------
--- AUTHOR : Thomas Wallace		   DATE: 10/15/2020
--- PURPOSE: Handles Linking a port from a layout to another device
+-- AUTHOR : Thomas Wallace		   DATE: 10/17/2020
+-- PURPOSE: Handles User (Retrieving Security Questiosn) - 
 ------------------------------------------------------------------------------------------------------------------
 -- UPDATES:	
--- 10/15/2020 - TCW - Intial Creationg of csp_LINK_PortToDevice
-
+-- 10/17/2020 - TCW - Intial Creationg of [csp_GetSecQuestions]
 ------------------------------------------------------------------------------------------------------------------
 DECLARE @ERRMSG as varchar(2048)
 DECLARE @MSG as varchar(2048)
 DECLARE @LST_UPDT_USER_ID as varchar(60)
-DECLARE @RESULT as INT
-DECLARE @ATTR_VALUE as varchar(255)
-DECLARE @VALOUT as varchar(255)
-DECLARE @COMM_TXT CHAR(8)
-DECLARE @ATTR_KEY_CD1 CHAR(8) = 'PRT_ASSN' -- PRT_CFG_ID + '.' + PRT_ID (casted as string) = link
-DECLARE @ATTR_KEY_CD2 CHAR(8) = 'PRTDEVID' -- Could be the LO_ID or DEV_ID (Still on the fence on this one)
-DECLARE @LO_NAME VARCHAR(100) 
-DECLARE @LO_DEV_ID INT
+DECLARE @RESULT as INT = 0
+DECLARE @usrResult as tinyint = 0
 
---IF A DEVICE IS LINKED FROM THIS DEVICE TO ANOTHER DEVICE, THAT DEVICE TOO SHOULD REFLECT THAT CONNECTION ON THE OPPOSITE AVENUE(ROUND ROBIN LINK)
---USED FOR CREATING THE RETURN LINK 
-DECLARE @RET_LO_ID INT
-
-BEGIN TRANSACTION 
-	--SET USER ID FOR TRANSACTION
-	IF (@USR is not null)
-		SET @LST_UPDT_USER_ID = @USR
-	else
-		SET @LST_UPDT_USER_ID = USER_NAME()
-
-	BEGIN TRY
-		--CHECK FOR VALID DEVICE ID
-		IF (@LNK_DEV_ID = 0) OR NOT EXISTS(SELECT DEV_ID from dbo.DEVICES WITH (NOLOCK) WHERE DEV_ID=@LNK_DEV_ID) BEGIN 
-			SET @MSG = 'Invalid Device ID Provided for link. (LNK_DEV_ID=' + CAST(@LNK_DEV_ID as varchar(10)) + ' - NOT VALID!)'
-			RAISERROR (@MSG,15,1) 
-		END
-	
-		--CHECK FOR VALID LAYOUT ID
-		IF (@LO_ID = 0) OR NOT EXISTS(SELECT LO_ID from dbo.LAYOUTS WITH (NOLOCK) WHERE LO_ID=@LO_ID) BEGIN 
-			SET @MSG = 'Invalid Layout ID Provided for link. (LO_ID=' + CAST(@LO_ID as varchar(10)) + ' - NOT VALID!)'
-			RAISERROR (@MSG,15,1) 
-		END
-		ELSE BEGIN
-			--GET LAYOUT NAME AND DEVILCE ASSOCIATED WITH "THIS" LAYOUT. 
-			--THIS WILL BE USED TO CREATE THE ROUND ROBIN LINK BACK.
-			Select @LO_NAME = LO_NAME, @LO_DEV_ID = LO_DEV_ID from dbo.LAYOUTS WITH (NOLOCK) WHERE LO_ID = @LO_ID
-		END
-		
-
-		--PERFORM LINK 
-		UPDATE dbo.DEVICE_PORT_ATTR SET 
-			ATTR_VALUE = CASE 
-							WHEN ATTR_KEY_CD =  @ATTR_KEY_CD1 THEN RTRIM(CAST(@PRT_CFG_ID as varchar(10))) + '.' + RTRIM(CAST(@PRT_ID as varchar(10)))
-							WHEN ATTR_KEY_CD =  @ATTR_KEY_CD1 THEN CAST(@LNK_DEV_ID as varchar(10))
-							ELSE ATTR_VALUE
-						END 
-		WHERE
-			@LO_ID = LO_ID
-			AND @PRT_CFG_ID = PRT_CFG_ID
-			AND @PRT_ID = PRT_ID
-			AND ATTR_KEY_CD  IN (@ATTR_KEY_CD1, @ATTR_KEY_CD2)
-
-		--CREATE CIRCULAR LINK
-		SELECT @RET_LO_ID = LO_ID from dbo.LAYOUTS L WITH (NOLOCK) INNER JOIN dbo.DEVICES D WITH (NOLOCK) ON L.LO_DEV_ID = D.DEV_ID AND L.LO_SFT_DEL = 0 AND D.DEV_SFT_DEL = 0 AND D.DEV_ID = @LNK_DEV_ID
-		IF (@RET_LO_ID  is not null) BEGIN
-			--IF There is a layout for the device being linked to, first lets make sure it is not soft deleted and that the device exists, if so grab the LO_ID of that device
-			Select 1/1
-		END
-			
-
-		COMMIT TRANSACTION 
-	END TRY
-	BEGIN CATCH
-		--ERROR CATCH
-		ROLLBACK TRANSACTION 
-
-		SET @ERRMSG = '(' + CAST(ERROR_NUMBER() as VARCHAR(10)) + ' - ' + ERROR_MESSAGE() + ')'
-		
-		--LOG ERROR IN ACTIVIT RECORD
-		INSERT INTO dbo.AUDIT_ACTIVITY (ACT_TYP_ID, ACT_DESC, REC_CRTE_USER_ID)
-		Select
-			dbo.fnc_GetActivityID('DEV_LNK_ERR') as ACT_TYP_ID,
-			RTRIM('<<DEVICE LINK ERROR>>  -  [LAYOUT_NAME] - (''' + ISNULL(@LO_NAME,'--null--') + ''')     [ERROR] - ' + 
-			'(' + ISNULL(ERROR_PROCEDURE(),'') + ') - ' + @ERRMSG
-			) as ACT_DESC,
-			isnull(@LST_UPDT_USER_ID,user_name()) as REC_CRTE_USER_ID
-	END CATCH
-
-return
+	--UPDATE USER_INFO TO MARK ACCOUNT AS VERIFIED
+	Select 
+		SQ.SEC_QUEST_ID
+		,SQ.SEC_QUEST_TXT 
+	FROM dbo.SECURITY_QUESTIONS SQ WITH (NOLOCK)
+	WHERE (
+			SQ.SEC_QUEST_ID <> @IGNORE_QID1
+			AND SQ.SEC_QUEST_ID <> @IGNORE_QID2
+		)
+	ORDER BY SQ.SEC_QUEST_ID
 GO
 
 
+--======================================================
+-- PROCEDURES RELATED TO LAYOUT EFFORTS
+--======================================================
 CREATE OR ALTER PROCEDURE [dbo].[csp_ADD_Layout]
 	@LO_NAME		varchar(100),
 	@LO_DEV_ID		INT,
@@ -932,58 +941,50 @@ BEGIN TRANSACTION
 		LAYOUTS ALLOW FOR CUSTOMIZATION AS THEY ASSOCIATE ATTRIBUTES TO A DEVICE 
 		(AS TO WHERE A DEVICE IS JUST A DEVICE). DEVICES CONTAIN NO OWNERSHIP OR CUSTOMIZATION IF NOT USED IN LAYOUT
 		----------------------------------------------------------------------------------------------------------*/
-		--LOCAL TEMP TABLE FOR LOOP TO EXECUTE QUERY
-		CREATE TABLE #ATTR_TEMP (
-			ATTR_KEY_CD CHAR(8) NOT NULL,
-			ATTR_VALUE VARCHAR(255) NULL,
-			COMM_TYPE_CD CHAR(8) NOT NULL,
-		)
 		
-		--INSERT INTO LOCAL TEMP TABLE (BOTH SETS OF ATTRIBUTES)
-		INSERT INTO #ATTR_TEMP 
-		Select COMM_CD, null AS ATTR_VALUE, COMM_TYPE_CD from dbo.COMMON_CODES CC WITH (NOLOCK) WHERE CC.COMM_TYPE_CD IN ('DEV_ATTR','PRT_ATTR') ORDER BY COMM_TYPE_CD, COMM_CD 
-
-		--WALK THRU ALL AVAILALBE ATTR_KEY_CDS AND ADD THEM TO THE DEVICE_EXT_ATTR TABLE
-		WHILE EXISTS(SELECT ATTR_KEY_CD from #ATTR_TEMP WHERE COMM_TYPE_CD = 'DEV_ATTR') BEGIN
-			--GET KEY
-			SELECT @ATTR_KEY_CD = ATTR_KEY_CD FROM #ATTR_TEMP WHERE COMM_TYPE_CD = 'DEV_ATTR'
-			
-			--ADD KEY INFO
-			EXEC @RESULT = dbo.csp_ADD_Device_EXT_Attr @DEV_ID = @LO_DEV_ID, @LO_ID = @MY_LO_ID, @ATTR_KEY_CD = @ATTR_KEY_CD, @ATTR_VALUE = null, @USR = @REC_CRTE_USER_ID
-			
-			--CHECK RESULTS
-			IF (@RESULT = 0) BEGIN
-				SET @MSG = 'Error occured adding device attribute. (LO_ID=' + CAST(@My_LO_ID as varchar(10)) + '  -  ATTRIBUTE: ''' + @ATTR_KEY_CD + ''' )'
-				RAISERROR (@MSG,15,1) 
-			END
-
-			--DELETE KEY FROM PROCESS TEMP TABLE
-			DELETE FROM #ATTR_TEMP WHERE ATTR_KEY_CD = @ATTR_KEY_CD AND COMM_TYPE_CD = 'DEV_ATTR'
-		END
+		--================================================================================
+		-- ADD ALL AVAILABLE ATTRIBUTES FOR DEVICE_EXT_ATTR (THESE ARE ALL NEEDED)
+		--================================================================================
+		INSERT INTO dbo.DEVICE_EXT_ATTR (DEV_ID, LO_ID, ATTR_KEY_CD, ATTR_VALUE, REC_CRTE_TS, REC_CRTE_USER_ID)
+		Select	
+			@LO_DEV_ID  DEV_ID
+			,@MY_LO_ID as LO_ID
+			,CC.COMM_CD as ATTR_KEY_CD
+			,'' as ATTR_VALUE
+			,GetDate() as REC_CRTE_TS
+			,@REC_CRTE_USER_ID as REC_CRTE_USER_ID
+		FROM 
+			dbo.COMMON_CODES CC WITH (NOLOCK),
+			dbo.DEVICES D WITH (NOLOCK)
+		WHERE
+			@LO_DEV_ID = D.DEV_ID
+			AND CC.COMM_TYPE_CD ='DEV_ATTR'
 
 
-		-- INSERT DEVICE_PORT_ATTR INFORMATION SEEING THIS IS TIED TO A LAYOUT 
+		--================================================================================
+		-- ADD ALL AVAILABLE ATTRIBUTES FOR DEVICE_PORT_ATTR (THESE ARE ALL NEEDED)
+		--================================================================================
 		INSERT INTO dbo.DEVICE_PORT_ATTR (LO_ID, PRT_CFG_ID, PRT_ID, ATTR_KEY_CD, ATTR_VALUE, REC_CRTE_USER_ID)
 		Select 
 			@MY_LO_ID as LO_ID
 			,DP.PRT_CFG_ID
 			,DP.PRT_ID
-			,TMP.ATTR_KEY_CD as ATTR_KEY_CD
+			,CC.COMM_CD as ATTR_KEY_CD
 			,REPLACE(
 				REPLACE(
-					REPLACE(dbo.fnc_AppSettingValue(tmp.ATTR_KEY_CD),'@VAL',RTRIM(CAST(DP.PRT_ID as varchar(3))))
+					REPLACE(dbo.fnc_AppSettingValue(CC.COMM_CD),'@VAL',RTRIM(CAST(DP.PRT_ID as varchar(3))))
 				,'@PT',RTRIM(dbo.fnc_PortToText(DPC.PRT_TYP_ID)))
 			,'@CT',RTRIM(ISNULL(dbo.fnc_CommonCodeTXT(DPC.PRT_DIR_CD,'PORT_DIR'),''))) as ATTR_VALUE
-			,'AdminTom' as REC_CRTE_USER_ID
+			,@REC_CRTE_USER_ID as REC_CRTE_USER_ID
 		FROM
 			dbo.DEVICES D WITH (NOLOCK),
 			dbo.DEVICE_PORT_CONFIG DPC WITH (NOLOCK),
-			Dbo.DEVICE_PORTS DP WITH (NOLOCK),
-			#ATTR_TEMP TMP
+			dbo.DEVICE_PORTS DP WITH (NOLOCK),
+			dbo.COMMON_CODES CC WITH (NOLOCK)
 		WHERE
 			D.DEV_ID = DPC.DEV_ID
 			AND DPC.PRT_CFG_ID = DP.PRT_CFG_ID
-			AND TMP.COMM_TYPE_CD ='PRT_ATTR'
+			AND CC.COMM_TYPE_CD ='PRT_ATTR'
 			AND @LO_DEV_ID = DPC.DEV_ID 
 
 		SET @RESULT = 1
@@ -1010,7 +1011,7 @@ return (@RESULT)
 GO
 
 
-CREATE OR ALTER PROCEDURE [dbo].[csp_UPDATE_Layout]
+CREATE OR ALTER PROCEDURE [dbo].[csp_UPD_Layout]
 	@LO_ID			INT = 0,
 	@LO_NAME		VARCHAR(100),
 	@LO_NOTES		VARCHAR(500) = null,
@@ -1022,7 +1023,7 @@ SET NOCOUNT ON
 -- PURPOSE: Handles Updating the Layout
 ------------------------------------------------------------------------------------------------------------------
 -- UPDATES:	
--- 10/14/2020 - TCW - Intial Creationg of csp_UPDATE_Layout
+-- 10/14/2020 - TCW - Intial Creationg of csp_UPD_Layout
 
 ------------------------------------------------------------------------------------------------------------------
 DECLARE @ERRMSG as varchar(2048)
@@ -1241,6 +1242,114 @@ return
 GO
 
 
+
+--======================================================
+-- PROCEDURES RELATED TO DEVICE EFFORTS
+--======================================================
+CREATE OR ALTER PROCEDURE [dbo].[csp_LINK_PortToDevice]
+	@LO_ID				INT,	
+	@PRT_CFG_ID			INT,
+	@PRT_ID				INT,
+	@ATTR_KEY_CD		CHAR(8),
+	@LNK_PRT_CFG_ID		INT,
+	@LNK_PRT_ID			INT,
+	@LNK_DEV_ID			INT,
+	@USR				VARCHAR(60) = null
+AS
+SET NOCOUNT ON
+------------------------------------------------------------------------------------------------------------------
+-- AUTHOR : Thomas Wallace		   DATE: 10/15/2020
+-- PURPOSE: Handles Linking a port from a layout to another device
+------------------------------------------------------------------------------------------------------------------
+-- UPDATES:	
+-- 10/15/2020 - TCW - Intial Creationg of csp_LINK_PortToDevice
+
+------------------------------------------------------------------------------------------------------------------
+DECLARE @ERRMSG as varchar(2048)
+DECLARE @MSG as varchar(2048)
+DECLARE @LST_UPDT_USER_ID as varchar(60)
+DECLARE @RESULT as INT
+DECLARE @ATTR_VALUE as varchar(255)
+DECLARE @VALOUT as varchar(255)
+DECLARE @COMM_TXT CHAR(8)
+DECLARE @ATTR_KEY_CD1 CHAR(8) = 'PRT_ASSN' -- PRT_CFG_ID + '.' + PRT_ID (casted as string) = link
+DECLARE @ATTR_KEY_CD2 CHAR(8) = 'PRTDEVID' -- Could be the LO_ID or DEV_ID (Still on the fence on this one)
+DECLARE @LO_NAME VARCHAR(100) 
+DECLARE @LO_DEV_ID INT
+
+--IF A DEVICE IS LINKED FROM THIS DEVICE TO ANOTHER DEVICE, THAT DEVICE TOO SHOULD REFLECT THAT CONNECTION ON THE OPPOSITE AVENUE(ROUND ROBIN LINK)
+--USED FOR CREATING THE RETURN LINK 
+DECLARE @RET_LO_ID INT
+
+BEGIN TRANSACTION 
+	--SET USER ID FOR TRANSACTION
+	IF (@USR is not null)
+		SET @LST_UPDT_USER_ID = @USR
+	else
+		SET @LST_UPDT_USER_ID = USER_NAME()
+
+	BEGIN TRY
+		--CHECK FOR VALID DEVICE ID
+		IF (@LNK_DEV_ID = 0) OR NOT EXISTS(SELECT DEV_ID from dbo.DEVICES WITH (NOLOCK) WHERE DEV_ID=@LNK_DEV_ID) BEGIN 
+			SET @MSG = 'Invalid Device ID Provided for link. (LNK_DEV_ID=' + CAST(@LNK_DEV_ID as varchar(10)) + ' - NOT VALID!)'
+			RAISERROR (@MSG,15,1) 
+		END
+	
+		--CHECK FOR VALID LAYOUT ID
+		IF (@LO_ID = 0) OR NOT EXISTS(SELECT LO_ID from dbo.LAYOUTS WITH (NOLOCK) WHERE LO_ID=@LO_ID) BEGIN 
+			SET @MSG = 'Invalid Layout ID Provided for link. (LO_ID=' + CAST(@LO_ID as varchar(10)) + ' - NOT VALID!)'
+			RAISERROR (@MSG,15,1) 
+		END
+		ELSE BEGIN
+			--GET LAYOUT NAME AND DEVILCE ASSOCIATED WITH "THIS" LAYOUT. 
+			--THIS WILL BE USED TO CREATE THE ROUND ROBIN LINK BACK.
+			Select @LO_NAME = LO_NAME, @LO_DEV_ID = LO_DEV_ID from dbo.LAYOUTS WITH (NOLOCK) WHERE LO_ID = @LO_ID
+		END
+		
+
+		--PERFORM LINK 
+		UPDATE dbo.DEVICE_PORT_ATTR SET 
+			ATTR_VALUE = CASE 
+							WHEN ATTR_KEY_CD =  @ATTR_KEY_CD1 THEN RTRIM(CAST(@PRT_CFG_ID as varchar(10))) + '.' + RTRIM(CAST(@PRT_ID as varchar(10)))
+							WHEN ATTR_KEY_CD =  @ATTR_KEY_CD1 THEN CAST(@LNK_DEV_ID as varchar(10))
+							ELSE ATTR_VALUE
+						END 
+		WHERE
+			@LO_ID = LO_ID
+			AND @PRT_CFG_ID = PRT_CFG_ID
+			AND @PRT_ID = PRT_ID
+			AND ATTR_KEY_CD  IN (@ATTR_KEY_CD1, @ATTR_KEY_CD2)
+
+		--CREATE CIRCULAR LINK
+		SELECT @RET_LO_ID = LO_ID from dbo.LAYOUTS L WITH (NOLOCK) INNER JOIN dbo.DEVICES D WITH (NOLOCK) ON L.LO_DEV_ID = D.DEV_ID AND L.LO_SFT_DEL = 0 AND D.DEV_SFT_DEL = 0 AND D.DEV_ID = @LNK_DEV_ID
+		IF (@RET_LO_ID  is not null) BEGIN
+			--IF There is a layout for the device being linked to, first lets make sure it is not soft deleted and that the device exists, if so grab the LO_ID of that device
+			Select 1/1
+		END
+			
+
+		COMMIT TRANSACTION 
+	END TRY
+	BEGIN CATCH
+		--ERROR CATCH
+		ROLLBACK TRANSACTION 
+
+		SET @ERRMSG = '(' + CAST(ERROR_NUMBER() as VARCHAR(10)) + ' - ' + ERROR_MESSAGE() + ')'
+		
+		--LOG ERROR IN ACTIVIT RECORD
+		INSERT INTO dbo.AUDIT_ACTIVITY (ACT_TYP_ID, ACT_DESC, REC_CRTE_USER_ID)
+		Select
+			dbo.fnc_GetActivityID('DEV_LNK_ERR') as ACT_TYP_ID,
+			RTRIM('<<DEVICE LINK ERROR>>  -  [LAYOUT_NAME] - (''' + ISNULL(@LO_NAME,'--null--') + ''')     [ERROR] - ' + 
+			'(' + ISNULL(ERROR_PROCEDURE(),'') + ') - ' + @ERRMSG
+			) as ACT_DESC,
+			isnull(@LST_UPDT_USER_ID,user_name()) as REC_CRTE_USER_ID
+	END CATCH
+
+return
+GO
+
+
 CREATE OR ALTER PROCEDURE [dbo].[csp_ADD_Device]
 	@DEV_TYP_ID		SMALLINT,
 	@DEV_NAME		VARCHAR(100),
@@ -1273,6 +1382,7 @@ DECLARE @PRT_CFG_ID int
 DECLARE @PRT_TYP_ID tinyint
 DECLARE @PRT_DIR_CD char(1)
 DECLARE @PRT_CNT	tinyint
+DECLARE @PRT_GNDR	char(1)
 DECLARE @RESULT		int = 0
 DECLARE @retResult  int = 0
 DECLARE @TranCnt	int = @@TRANCOUNT
@@ -1280,17 +1390,23 @@ DECLARE @Temp		Table (
 		ENTRY_ID	int identity(1,1) not null,
 		PRT_TYP_ID	tinyint null,
 		PRT_DIR_CD	char(1) null,
-		PRT_CNT		tinyint null
+		PRT_CNT		tinyint null,
+		PRT_GNDR	char(1) null
 	)
+DECLARE @DEBUG BIT = 0			--USED TO CONTROL DEBUG MESSAGES (1=On/0=Off) -SEE APP_DEFAULTS TABLE KEY=DEBUGSQL
+
+--SET DEBUG PREFERENCE (SETS DEBUG FLAG/BIT to 0 or 1)
+SELECT @DEBUG = CASE WHEN CAST(ISNULL(APD.APP_VALUE,'0') as varchar(3)) > 0 THEN 1 ELSE 0 END from dbo.APP_DEFAULTS APD WITH (NOLOCK) WHERE APD.APP_KEY = 'DEBUGSQL'
 
 IF (@TranCnt = 0) BEGIN
 	BEGIN TRANSACTION 
-	SET @TranCnt = @@TRANCOUNT
 END
 
-	PRINT 'csp_UPDATE_Device'
-	PRINT 'TRAN COUNT: ' + CAST(@TranCnt as varchar(3))
-	
+IF (@DEBUG=1) BEGIN
+	PRINT 'csp_ADD_Device'
+	PRINT 'TRAN COUNT: ' + CAST(@@TRANCOUNT as varchar(3))
+END
+
 	--SET USER ID FOR TRANSACTION
 	IF (@USR is not null)
 		SET @REC_CRTE_USER_ID = @USR
@@ -1316,12 +1432,13 @@ END
 		--CHECK AND PROCESS JSON DATA	
 		IF ISJSON(@PRT_JSON) > 0 BEGIN
 			--PARSE JSON DATA (IF IT IS VALID JSON) THEN LOAD IT INTO A @TEMP TABLE FOR PROCESSING
-			INSERT INTO @Temp (PRT_TYP_ID, PRT_DIR_CD, PRT_CNT) --, PRT_CHAN, PRT_DESC, PRT_GNDR, PRT_NAME)
+			INSERT INTO @Temp (PRT_TYP_ID, PRT_DIR_CD, PRT_CNT, PRT_GNDR) --, PRT_CHAN, PRT_DESC, PRT_GNDR, PRT_NAME)
 			SELECT * FROM OPENJSON(@PRT_JSON)
 				WITH ( 
 					PRT_TYP_ID tinyint 'strict $.PRT_TYP_ID',
 					PRT_DIR_CD CHAR(1) 'strict $.PRT_DIR_CD',
-					PRT_CNT tinyint 'strict $.PRT_CNT'
+					PRT_CNT tinyint 'strict $.PRT_CNT',
+					PRT_GNDR CHAR(1) 'strict $.PRT_GNDR'
 					)
 			
 			--REMOVE PORTS WITH NO COUNT, THESE ARE NOT VALID 
@@ -1335,11 +1452,15 @@ END
 						@PRT_TYP_ID = PRT_TYP_ID
 						,@PRT_DIR_CD = PRT_DIR_CD
 						,@PRT_CNT = PRT_CNT
+						,@PRT_GNDR = PRT_GNDR
 					FROM @Temp
 					ORDER BY PRT_TYP_ID, PRT_DIR_CD
 
-					exec @retResult = dbo.csp_ADD_DevicePortConfig @DEV_ID, @PRT_TYP_ID, @PRT_DIR_CD, @PRT_CNT, @REC_CRTE_USER_ID, @PRT_CFG_ID OUTPUT
+					IF (@DEBUG=1) 
+						print 'CALLING: csp_ADD_DevicePortConfig (' + CAST(ISNULL(@DEV_ID,'') as varchar(10)) + ', ' + CAST(ISNULL(@PRT_TYP_ID,'') as varchar(10)) + ', ' + @PRT_DIR_CD + ', ' + CAST(ISNULL(@PRT_CNT,'') as varchar(3)) + ', ' + @PRT_GNDR + ', ''' + @REC_CRTE_USER_ID + ''')'
 
+					exec @retResult = dbo.csp_ADD_DevicePortConfig @DEV_ID, @PRT_TYP_ID, @PRT_DIR_CD, @PRT_CNT, @PRT_GNDR, @REC_CRTE_USER_ID, @PRT_CFG_ID OUTPUT
+					
 					--CHECK FOR VALID DEVICE ID
 					IF (@retResult = 0) BEGIN 
 						SET @MSG = 'Unable to add Port Configuration! (DEV_ID=' + CAST(ISNULL(@DEV_ID,'') as varchar(10)) + '), ' + '(PRT_CFG_ID=' + CAST(ISNULL(@PRT_CFG_ID,'') as varchar(10)) + ')'
@@ -1353,15 +1474,19 @@ END
 		END
 
 		IF (@CRTE_LAYOUT = 1) 
+			IF (@DEBUG=1) BEGIN
+				print 'Calling csp_ADD_Layout (''' + ISNULL(@DEV_NAME,'null') + ''', ' + CAST(ISNULL(@DEV_ID,'null') as varchar(10)) + ', ''' + @REC_CRTE_USER_ID + ''')'
+			END
 			exec dbo.csp_ADD_Layout @LO_NAME = @DEV_NAME, @LO_DEV_ID = @DEV_ID, @USR=@REC_CRTE_USER_ID
 
 		SET @RESULT = 1
 
-		COMMIT TRANSACTION
 	END TRY
 	BEGIN CATCH
 		--ERROR CATCH
-		ROLLBACK TRANSACTION
+		IF (@DEBUG=1) BEGIN
+			print 'csp_ADD_Device (ERROR OCCURED)'
+		END
 
 		SET @ERRMSG = '(' + CAST(ERROR_NUMBER() as VARCHAR(10)) + ' - ' + ERROR_MESSAGE() + ')'
 		
@@ -1376,11 +1501,22 @@ END
 			isnull(@REC_CRTE_USER_ID,user_name()) as REC_CRTE_USER_ID
 	END CATCH
 
+IF (@TranCnt = 0) AND (@RESULT = 1) BEGIN
+	COMMIT TRANSACTION
+	IF (@DEBUG = 1) 
+		print 'Transaction Committed (csp_ADD_Device)'
+END 
+ELSE IF (@TranCnt = 0) AND (@RESULT = 0) BEGIN
+	ROLLBACK TRANSACTION
+	IF (@DEBUG = 1)
+		print 'Transaction RolledBack (csp_ADD_Device)'
+END
+
 return (@RESULT)
 GO
 
 
-CREATE OR ALTER PROCEDURE [dbo].[csp_UPDATE_Device]
+CREATE OR ALTER PROCEDURE [dbo].[csp_UPD_Device]	
 	@DEV_ID			INT = 0,
 	@DEV_TYP_ID		SMALLINT,
 	@DEV_NAME		VARCHAR(100),
@@ -1399,7 +1535,7 @@ SET NOCOUNT ON
 -- PURPOSE: Handles 
 ------------------------------------------------------------------------------------------------------------------
 -- UPDATES:	
--- 10/07/2020 - TCW - Intial Creationg of csp_UPDATE_Device
+-- 10/07/2020 - TCW - Intial Creationg of csp_UPD_Device
 -- 10/10/2020 - TCW - Added varbinary(max) for device image (Stored in Device Table)
 ------------------------------------------------------------------------------------------------------------------
 DECLARE @ERRMSG as varchar(2048)
@@ -1411,16 +1547,19 @@ DECLARE @PRT_TYP_ID TINYINT
 DECLARE @PRT_DIR_CD CHAR(1)
 DECLARE @PRT_CNT as TINYINT
 DECLARE @retRESULT as INT = 0
+DECLARE @TranCnt as INT = @@TRANCOUNT	
 DECLARE @RESULT AS INT = 0
 DECLARE @CntDiff smallint = 0
 DECLARE @PosStart tinyint = 0
 DECLARE @ICnt as INT = 0 
-DECLARE @TranCnt int = @@TRANCOUNT
+DECLARE @PRT_GNDR as CHAR(1) = null
+
 DECLARE @Temp as Table (
 		ENTRY_ID int identity(1,1) not null,
 		PRT_TYP_ID tinyint null,
 		PRT_DIR_CD char(1) null,
-		PRT_CNT tinyint null
+		PRT_CNT tinyint null,
+		PRT_GNDR char(1) null
 	)
 DECLARE @TempCFG as Table (
 	PRT_CFG_ID int not null,
@@ -1428,21 +1567,33 @@ DECLARE @TempCFG as Table (
 	DEV_ID INT not null,
 	PRT_TYP_ID tinyint not null,
 	PRT_DIR_CD CHAR(1) not null,
+	OLD_PRT_GNDR CHAR(1) null,
+	NEW_PRT_GNDR char(1) null,
 	OLD_PRT_CNT smallint not null,
 	NEW_PRT_CNT smallint not null
 )
+DECLARE @DEBUG BIT = 0			--USED TO CONTROL DEBUG MESSAGES (1=On/0=Off) -SEE APP_DEFAULTS TABLE KEY=DEBUGSQL
 
-BEGIN TRANSACTION 
-	print 'Transaction Start (csp_UPDATE_Device)'
-	PRINT 'csp_UPDATE_Device'
-	PRINT 'TRAN COUNT: ' + CAST(@TranCnt as varchar(3))
+--SET DEBUG PREFERENCE (SETS DEBUG FLAG/BIT to 0 or 1)
+SELECT @DEBUG = CASE WHEN CAST(ISNULL(APD.APP_VALUE,'0') as varchar(3)) > 0 THEN 1 ELSE 0 END from dbo.APP_DEFAULTS APD WITH (NOLOCK) WHERE APD.APP_KEY = 'DEBUGSQL'
 
+IF (@TranCnt = 0) BEGIN
+	BEGIN TRANSACTION 
+END
+
+IF (@DEBUG=1) BEGIN
+	print 'Transaction Start (csp_UPD_Device)'
+	PRINT 'TRAN COUNT: ' + CAST(@@TRANCOUNT as varchar(3))
+END
+
+	--=====================================================
+	--SET DEFAULTS FOR DEVICE IMAGE AND USER INFO
+	--=====================================================
 	--SET USER ID FOR TRANSACTION
 	IF (@USR is not null)
 		SET @LST_UPDT_USER_ID = @USR
 	else
 		SET @LST_UPDT_USER_ID = USER_NAME()
-
 
 	--SET DEFAULT IMAGE TO NO IMAGE (IMAGE) FOR A NON DEFINED DEVICE IMAGE
 	IF (@DEV_IMG IS NOT NULL)
@@ -1451,7 +1602,11 @@ BEGIN TRANSACTION
 		SELECT @IMAGE = AD.APP_BIN_VALUE FROM DBO.APP_DEFAULTS AD WITH (NOLOCK) WHERE AD.APP_KEY = 'NO_IMAGE'
 
 
-	--BEGIN TRY
+	--=====================================================
+	--LETS TRY TO DO THE UPDATES
+	--=====================================================
+	BEGIN TRY
+
 		--CHECK FOR VALID DEVICE ID
 		IF (@DEV_ID = 0) OR NOT EXISTS(SELECT DEV_ID from dbo.DEVICES WITH (NOLOCK) WHERE DEV_ID=@DEV_ID) BEGIN 
 			SET @MSG = 'Invalid Device ID Provided. (DEV_ID=' + CAST(@DEV_ID as varchar(10)) + ' - NOT VALID!)'
@@ -1478,12 +1633,13 @@ BEGIN TRANSACTION
 		IF ISJSON(@PRT_JSON) > 0 
 		BEGIN
 			--PARSE JSON DATA (IF IT IS VALID JSON) THEN LOAD IT INTO A @TEMP TABLE FOR PROCESSING
-			INSERT INTO @Temp (PRT_TYP_ID, PRT_DIR_CD, PRT_CNT) --, PRT_CHAN, PRT_DESC, PRT_GNDR, PRT_NAME)
+			INSERT INTO @Temp (PRT_TYP_ID, PRT_DIR_CD, PRT_CNT, PRT_GNDR) --, PRT_CHAN, PRT_DESC, PRT_GNDR, PRT_NAME)
 			SELECT * FROM OPENJSON(@PRT_JSON)
 				WITH ( 
 					PRT_TYP_ID tinyint 'strict $.PRT_TYP_ID',
 					PRT_DIR_CD CHAR(1) 'strict $.PRT_DIR_CD',
-					PRT_CNT tinyint 'strict $.PRT_CNT'
+					PRT_CNT tinyint 'strict $.PRT_CNT',
+					PRT_GNDR CHAR(1) 'strict $.PRT_GNDR'
 					)
 					--WE HAVE DATA FROM JSON LETS PROCESS IT
 
@@ -1491,32 +1647,40 @@ BEGIN TRANSACTION
 			DELETE FROM @Temp WHERE PRT_CNT = 0
 
 			--TAKE SNAPSHOT OF CURRENT CONFIG (USED FOR DRIVING UPDATE)
-			INSERT INTO @TempCFG (PRT_CFG_ID,DEV_ID,PRT_TYP_ID, PRT_DIR_CD, OLD_PRT_CNT, NEW_PRT_CNT)
-			SELECT DPC.PRT_CFG_ID, DPC.DEV_ID, DPC.PRT_TYP_ID, DPC.PRT_DIR_CD, DPC.PRT_CNT, DPC.PRT_CNT from dbo.DEVICE_PORT_CONFIG DPC WITH (NOLOCK) WHERE DPC.DEV_ID = @DEV_ID
+			INSERT INTO @TempCFG (PRT_CFG_ID,DEV_ID,PRT_TYP_ID, PRT_DIR_CD, OLD_PRT_CNT, NEW_PRT_CNT, OLD_PRT_GNDR, NEW_PRT_GNDR)
+			SELECT DPC.PRT_CFG_ID, DPC.DEV_ID, DPC.PRT_TYP_ID, DPC.PRT_DIR_CD, DPC.PRT_CNT, DPC.PRT_CNT, DPC.PRT_GNDR, DPC.PRT_GNDR from dbo.DEVICE_PORT_CONFIG DPC WITH (NOLOCK) WHERE DPC.DEV_ID = @DEV_ID
 
 
-			--DETERMINE UPDATES, DELETES AND ADDITIONS TO CONFIGURATION AND PORTS DUE TO UPDATE JSON DATA
+			--========================================================================
+			--DETERMINE WHAT NEEDS TO BE UPDATED, DELETED OR INSERTED FOR PORTS
 			--(NOTE: A DELETE CAN OCCUR IF ITS NOT PART OF THE CONFIGURATION ANYMORE)
+			--=======================================================================
 			UPDATE TC SET 
 				--IF IT CHANGED MARK IT FOR 'U'PDATE OTHER WISE 'S'KIP IT
-				TC.CFG_ACTION = CASE WHEN T.PRT_CNT <> TC.OLD_PRT_CNT then 'U' ELSE 'S' END
+				TC.CFG_ACTION = CASE 
+									WHEN T.PRT_CNT <> TC.OLD_PRT_CNT THEN 'U' 
+									WHEN T.PRT_GNDR <> TC.OLD_PRT_GNDR THEN 'U' 
+									ELSE 'S' 
+								END
 				,TC.NEW_PRT_CNT = T.PRT_CNT
+				,TC.NEW_PRT_GNDR = T.PRT_GNDR
 			FROM
 				@TempCFG TC INNER JOIN @Temp T 
 				ON
 					TC.PRT_TYP_ID = T.PRT_TYP_ID
-					AND TC.PRT_DIR_CD = T.PRT_DIR_CD	
-
+					AND TC.PRT_DIR_CD = T.PRT_DIR_CD
+					AND TC.OLD_PRT_GNDR = T.PRT_GNDR	
 
 			--ADD NEW ITEMS TO TABLE FOR PROCESSING AND MARK THEIR ACTIONS 'I'NSERT
-			INSERT INTO @TempCFG (PRT_CFG_ID, CFG_ACTION, DEV_ID, PRT_TYP_ID, PRT_DIR_CD, OLD_PRT_CNT, NEW_PRT_CNT)
+			INSERT INTO @TempCFG (PRT_CFG_ID, CFG_ACTION, DEV_ID, PRT_TYP_ID, PRT_DIR_CD, OLD_PRT_CNT, NEW_PRT_CNT,OLD_PRT_GNDR,NEW_PRT_GNDR)
 			SELECT
-				0,'I',@DEV_ID, T.PRT_TYP_ID, T.PRT_DIR_CD, T.PRT_CNT, T.PRT_CNT
+				0,'I',@DEV_ID, T.PRT_TYP_ID, T.PRT_DIR_CD, T.PRT_CNT, T.PRT_CNT, T.PRT_GNDR, T.PRT_GNDR
 			FROM
 				@TempCFG TC FULL OUTER JOIN @Temp T 
 				ON
 					TC.PRT_TYP_ID = T.PRT_TYP_ID
 					AND TC.PRT_DIR_CD = T.PRT_DIR_CD	
+					AND TC.OLD_PRT_GNDR = T.PRT_GNDR	
 			WHERE
 				TC.PRT_TYP_ID IS NULL 
 
@@ -1527,12 +1691,20 @@ BEGIN TRANSACTION
 			--*** AT THIS POINT WE HAVE A DRIVING TABLE THAT CONTAINS DELTAS FOR OUR PORT UPDATE PROCESS. ***
 			--===============================================================================================
 
-			SELECT * FROM @TempCFG
+			--DISPLAY LIST OF ITEMS BEING CHANGED (DEBUG ONLY)
+			IF (@DEBUG=1)
+				SELECT * FROM @TempCFG
 
+			--=====================================================
+			--DELETE ENTRIES FROM THE DEVICE_PORT_CONFIG TABLE
+			--=====================================================
 			WHILE EXISTS(SELECT PRT_CFG_ID FROM @TempCFG WHERE CFG_ACTION='D') BEGIN
 				--REMOVE ITEMS THAT WERE NOT LONGER PART OF THE CONFIG (DELETES)
 				Select TOP 1 @PRT_CFG_ID = PRT_CFG_ID FROM @TempCFG WHERE CFG_ACTION = 'D' ORDER BY PRT_CFG_ID ASC
 				
+				IF (@DEBUG=1) 
+						print 'CALLING: csp_DEL_DevicePortConfig (' + CAST(ISNULL(@DEV_ID,'') as varchar(10)) + ', ' + CAST(ISNULL(@PRT_CFG_ID,'') as varchar(10)) +  ', ''' + @LST_UPDT_USER_ID + ''')'
+
 				exec @retRESULT = csp_DEL_DevicePortConfig @DEV_ID, @PRT_CFG_ID, @LST_UPDT_USER_ID
 
 				--CHECK FOR VALID DEVICE ID
@@ -1545,17 +1717,23 @@ BEGIN TRANSACTION
 			END 
 
 			
+			--=====================================================
+			--INSERT NEW ENTRIES INTO THE DEVICE_PORT_CONFIG TABLE
+			--=====================================================
 			WHILE EXISTS(SELECT PRT_CFG_ID FROM @TempCFG WHERE CFG_ACTION='I') BEGIN
-				--INERT NEW ITEM CONFIG (INSERT NEW UPDATES)
 				Select TOP 1
 					@PRT_TYP_ID = PRT_TYP_ID
 					,@PRT_DIR_CD = PRT_DIR_CD
 					,@PRT_CNT = OLD_PRT_CNT
+					,@PRT_GNDR = OLD_PRT_GNDR
 				FROM @TempCFG 
 				WHERE CFG_ACTION = 'I' AND PRT_CFG_ID=0 
 				ORDER BY PRT_CFG_ID ASC
 				
-				exec @retRESULT = csp_ADD_DevicePortConfig @DEV_ID, @PRT_TYP_ID, @PRT_DIR_CD, @PRT_CNT, @LST_UPDT_USER_ID, @PRT_CFG_ID OUTPUT
+				IF (@DEBUG=1) 
+						print 'CALLING: csp_ADD_DevicePortConfig (' + CAST(ISNULL(@DEV_ID,'') as varchar(10)) + ', ' + CAST(ISNULL(@PRT_TYP_ID,'') as varchar(10)) + ', ' + @PRT_DIR_CD + ', ' + CAST(ISNULL(@PRT_CNT,'') as varchar(3)) + ', ' + @PRT_GNDR + ', ''' + @LST_UPDT_USER_ID + ''')'
+
+				exec @retRESULT = csp_ADD_DevicePortConfig @DEV_ID, @PRT_TYP_ID, @PRT_DIR_CD, @PRT_CNT, @PRT_GNDR, @LST_UPDT_USER_ID, @PRT_CFG_ID OUTPUT
 
 				--CHECK FOR VALID DEVICE ID
 				IF (@retRESULT = 0) BEGIN 
@@ -1563,34 +1741,49 @@ BEGIN TRANSACTION
 					RAISERROR (@MSG,15,1) 
 				END
 
-				DELETE FROM @TempCFG WHERE CFG_ACTION = 'I' AND @PRT_TYP_ID = PRT_TYP_ID AND @PRT_DIR_CD = PRT_DIR_CD AND @PRT_CNT = OLD_PRT_CNT
+				-- WE ARE NOT ADJUSTING BUT ADDING APORT (SET PRT_CNT TO 0 AND LET IT SYNC)
+				exec @retRESULT = dbo.csp_ADJUST_DevicePorts @DEV_ID, @PRT_CFG_ID, 'A', 0, @LST_UPDT_USER_ID
+
+				--CHECK Return Results
+				IF (@retRESULT = 0) BEGIN 
+					SET @MSG = 'Error adjusting Port Configuration! (DEV_ID=' + CAST(@DEV_ID as varchar(10)) + '), ' + '(PRT_CFG_ID=' + CAST(@PRT_CFG_ID as varchar(10)) + ')'
+					RAISERROR (@MSG,15,1) 
+				END
+
+				DELETE FROM @TempCFG WHERE CFG_ACTION = 'I' AND @PRT_TYP_ID = PRT_TYP_ID AND @PRT_DIR_CD = PRT_DIR_CD AND @PRT_CNT = OLD_PRT_CNT AND @PRT_GNDR = OLD_PRT_GNDR
 			END 
 
-			--NOW WE ADDRESS THE ACTUAL UPDATES.
-			--UPDATE PORT COUNTS
-			UPDATE DPC SET
-				PRT_CNT = T.NEW_PRT_CNT
-				,LST_UPDT_TS = GetDate()
-				,LST_UPDT_USER_ID = @LST_UPDT_USER_ID
-			FROM dbo.DEVICE_PORT_CONFIG DPC 
-			INNER JOIN @TempCFG T 
-			ON 
-				DPC.DEV_ID = @DEV_ID
-				AND T.PRT_CFG_ID = DPC.PRT_CFG_ID
-				AND T.CFG_ACTION = 'U'
-
+			--=====================================================
+			--UDPATE ENTRIES IN THE DEVICE_PORT_CONFIG TABLE
+			--=====================================================
 			WHILE EXISTS(Select PRT_CFG_ID FROM @TempCFG) BEGIN
 				Select TOP 1
 					@PRT_CFG_ID = TC.PRT_CFG_ID
 					,@PRT_TYP_ID = TC.PRT_TYP_ID
 					,@PRT_DIR_CD = TC.PRT_DIR_CD
 					,@CntDiff = (TC.NEW_PRT_CNT - TC.OLD_PRT_CNT)
+					,@PRT_CNT = TC.NEW_PRT_CNT
+					,@PRT_GNDR = TC.NEW_PRT_GNDR
 				From	
 					@TempCFG TC
 				WHERE
 					TC.CFG_ACTION = 'U'
 				ORDER BY PRT_CFG_ID ASC
 
+
+				IF (@DEBUG=1) 
+						print 'CALLING: csp_UPD_DevicePortConfig (' + CAST(ISNULL(@DEV_ID,'') as varchar(10)) + ', ' + CAST(ISNULL(@PRT_TYP_ID,'') as varchar(10)) + ', ' + @PRT_DIR_CD + ', ' + CAST(ISNULL(@PRT_CNT,'') as varchar(3)) + ', ' + @PRT_GNDR + ', ''' + @LST_UPDT_USER_ID + ''')'
+
+				--UPDATE DPC RECORD FIRST
+				exec @retRESULT = dbo.csp_UPD_DevicePortConfig @DEV_ID, @PRT_CFG_ID, @PRT_CNT, @PRT_GNDR, @LST_UPDT_USER_ID
+
+				--CHECK FOR VALID DEVICE ID
+				IF (@retRESULT = 0) BEGIN 
+					SET @MSG = 'Unable to update Port Configuration! (DEV_ID=' + CAST(@DEV_ID as varchar(10)) + '), ' + '(PRT_CFG_ID=' + CAST(ISNULL(@PRT_CFG_ID,'--null--') as varchar(10)) + ')'
+					RAISERROR (@MSG,15,1) 
+				END
+
+				--THEN MAKE ADJUSTMENTS TO THE DEVICE PORTS AND DEVICE PORT ATTRIBUTES TABLES
 				IF (@CntDiff < 0) Begin
 					--REMOVE PORTS
 					Select @CntDiff = ABS(@CntDiff)
@@ -1601,6 +1794,7 @@ BEGIN TRANSACTION
 					exec @retRESULT = dbo.csp_ADJUST_DevicePorts @DEV_ID, @PRT_CFG_ID, 'A', @CntDiff, @LST_UPDT_USER_ID
 				END
 
+				--set @retRESULT = 1
 				--CHECK Return Results
 				IF (@retRESULT = 0) BEGIN 
 					SET @MSG = 'Error adjusting Port Configuration! (DEV_ID=' + CAST(@DEV_ID as varchar(10)) + '), ' + '(PRT_CFG_ID=' + CAST(@PRT_CFG_ID as varchar(10)) + ')'
@@ -1612,32 +1806,149 @@ BEGIN TRANSACTION
 			END
 		END
 		SET @RESULT = 1
-	--END TRY
-	--BEGIN CATCH
-	--	--ERROR CATCH
-	--	SET @ERRMSG = '(' + CAST(ERROR_NUMBER() as VARCHAR(10)) + ' - ' + ERROR_MESSAGE() + ')'
-	--	print 'Failed in (csp_UPDATE_Device)'
 
-	--	--LOG ERROR IN ACTIVIT RECORD
-	--	INSERT INTO dbo.AUDIT_ACTIVITY (ACT_TYP_ID, ACT_DEV_ID, ACT_DESC, REC_CRTE_USER_ID)
-	--	Select
-	--		dbo.fnc_GetActivityID('DEVICE_ERR') as ACT_TYP_ID,
-	--		@DEV_ID,
-	--		RTRIM('<<DEVICE UPDATE ERROR>>  -  [DEV_NAME] - (''' + ISNULL(@DEV_NAME,'--null--') + ''')     [ERROR] - ' + 
-	--		'(' + ISNULL(ERROR_PROCEDURE(),'') + ') - ' + @ERRMSG
-	--		) as ACT_DESC,
-	--		isnull(@LST_UPDT_USER_ID,user_name()) as REC_CRTE_USER_ID
-	--END CATCH
+	END TRY
+	BEGIN CATCH
+		--ERROR CATCH
+		SET @ERRMSG = '(' + CAST(ERROR_NUMBER() as VARCHAR(10)) + ' - ' + ERROR_MESSAGE() + ')'
+		
+		IF (@DEBUG = 1)
+			print 'csp_UPD_Device (ERROR OCCURED)'
 
-	
-	if (@RESULT = 1)  BEGIN
-		COMMIT TRANSACTION
-		print 'Transaction Committed (csp_UPDATE_Device)'
-	END ELSE BEGIN
-		ROLLBACK TRANSACTION
-		print 'Transaction Rolledback (csp_UPDATE_Device)'
+		--LOG ERROR IN ACTIVIT RECORD
+		INSERT INTO dbo.AUDIT_ACTIVITY (ACT_TYP_ID, ACT_DEV_ID, ACT_DESC, REC_CRTE_USER_ID)
+		Select
+			dbo.fnc_GetActivityID('DEVICE_ERR') as ACT_TYP_ID,
+			@DEV_ID,
+			RTRIM('<<DEVICE UPDATE ERROR>>  -  [DEV_NAME] - (''' + ISNULL(@DEV_NAME,'--null--') + ''')     [ERROR] - ' + 
+			'(' + ISNULL(ERROR_PROCEDURE(),'') + ') - ' + @ERRMSG
+			) as ACT_DESC,
+			isnull(@LST_UPDT_USER_ID,user_name()) as REC_CRTE_USER_ID
+	END CATCH
+
+
+IF (@TranCnt = 0) AND (@RESULT = 1) BEGIN
+	COMMIT TRANSACTION
+	IF (@DEBUG = 1) 
+		print 'Transaction Committed (csp_UPD_Device)'
+END 
+ELSE IF (@TranCnt = 0) AND (@RESULT = 0) BEGIN
+	ROLLBACK TRANSACTION
+	IF (@DEBUG = 1)
+		print 'Transaction Rolledback (csp_UPD_Device)'
+END
+
+return(@RESULT)
+GO
+
+
+CREATE OR ALTER PROCEDURE [dbo].[csp_UPD_DevicePortConfig]
+	@DEV_ID			INT,
+	@PRT_CFG_ID		INT,
+	@PRT_CNT		TINYINT, 
+	@PRT_GNDR		CHAR(1) = 'F',
+	@USR			VARCHAR(60) = null
+AS
+SET NOCOUNT ON
+------------------------------------------------------------------------------------------------------------------
+-- AUTHOR : Thomas Wallace		   DATE: 10/18/2020
+-- PURPOSE: Handles (Updating Device Port Configurations)
+------------------------------------------------------------------------------------------------------------------
+-- UPDATES:	
+-- 10/25/2020 - TCW - Intial Creationg of csp_UPD_DevicePortConfig
+------------------------------------------------------------------------------------------------------------------
+
+DECLARE @ERRMSG varchar(2048)
+DECLARE @MSG as varchar(2048)
+DECLARE @LST_UPDT_USER_ID varchar(60)
+DECLARE @ICnt tinyint = 0
+DECLARE @RESULT INT = 0
+DECLARE @DEV_NAME varchar(100)
+DECLARE @TranCnt int = @@TRANCOUNT
+DECLARE @DEBUG BIT = 0			--USED TO CONTROL DEBUG MESSAGES (1=On/0=Off) -SEE APP_DEFAULTS TABLE KEY=DEBUGSQL
+
+--SET DEBUG PREFERENCE (SETS DEBUG FLAG/BIT to 0 or 1)
+SELECT @DEBUG = CASE WHEN CAST(ISNULL(APD.APP_VALUE,'0') as varchar(3)) > 0 THEN 1 ELSE 0 END from dbo.APP_DEFAULTS APD WITH (NOLOCK) WHERE APD.APP_KEY = 'DEBUGSQL'
+
+--Dont add to the transaction pool unless we need to.
+IF (@TranCnt = 0) BEGIN
+	BEGIN TRANSACTION 
+	IF (@DEBUG = 1) BEGIN
+		print 'Transaction Start (csp_UPD_DevicePortConfig)'
+		PRINT 'TRAN COUNT: ' + CAST(@@TRANCOUNT as varchar(3))
 	END
-return
+END
+
+IF (@DEBUG=1)
+	PRINT 'csp_UPD_DevicePortConfig (' + CAST(@DEV_ID as varchar(10)) + ',' + CAST(@PRT_CFG_ID as varchar(10)) + ',' + CAST(@PRT_CNT as varchar(10)) + ',' + @PRT_GNDR +  ',''' + ISNULL(@USR,'dbo') + ''')'
+
+	--SET USER ID FOR TRANSACTION
+	IF (@USR is not null)
+		SET @LST_UPDT_USER_ID = @USR
+	else
+		SET @LST_UPDT_USER_ID = USER_NAME()
+
+
+	BEGIN TRY
+		--CHECK FOR VALID DEVICE ID
+		IF (@DEV_ID = 0) OR NOT EXISTS(SELECT DEV_ID from dbo.DEVICES WITH (NOLOCK) WHERE DEV_ID=@DEV_ID) BEGIN 
+			SET @MSG = 'Invalid Device ID Provided. (DEV_ID=' + CAST(@DEV_ID as varchar(10)) + ' - NOT VALID!)'
+			RAISERROR (@MSG,15,1) 
+		END 
+		ELSE BEGIN
+			--IF DEVICE EXISTS THEN GET NAME OF DEVICE (FOR AUDIT REASONS)
+			SELECT @DEV_NAME = DEV_NAME from dbo.DEVICES WITH (NOLOCK) WHERE DEV_ID=@DEV_ID
+		END
+	
+		--========================================================
+		-- UPDATE DEVICE_PORT_CONFIG TABLE (UPDATES PRT_CNT ONLY)
+		--========================================================
+		UPDATE dbo.DEVICE_PORT_CONFIG SET
+			PRT_CNT = CASE WHEN @PRT_CNT <> PRT_CNT THEN @PRT_CNT ELSE PRT_CNT END
+			,PRT_GNDR = CASE WHEN @PRT_GNDR <> PRT_GNDR THEN @PRT_GNDR ELSE PRT_GNDR END
+			,LST_UPDT_TS = GetDate()
+			,LST_UPDT_USER_ID = @LST_UPDT_USER_ID
+		WHERE
+			@DEV_ID = DEV_ID
+			AND @PRT_CFG_ID = PRT_CFG_ID
+			AND (
+				@PRT_CNT <> PRT_CNT
+				OR @PRT_GNDR <> PRT_GNDR
+				)
+		
+
+
+		SET @RESULT=1
+	END TRY
+	BEGIN CATCH
+		--ERROR CATCH
+		SET @ERRMSG = '(' + CAST(ERROR_NUMBER() as VARCHAR(10)) + ' - ' + ERROR_MESSAGE() + ')'
+		IF (@DEBUG=1) 
+			print 'Failed in (csp_UPD_DevicePortsConfig)'
+
+		--LOG ERROR IN ACTIVIT RECORD
+		INSERT INTO dbo.AUDIT_ACTIVITY (ACT_TYP_ID, ACT_DEV_ID, ACT_DESC, REC_CRTE_USER_ID)
+		Select
+			dbo.fnc_GetActivityID('DEVICE_ERR') as ACT_TYP_ID,
+			@DEV_ID,
+			RTRIM('<<DEVICE UPDATE ERROR>>  -  [DEV_NAME] - (''' + ISNULL(@DEV_NAME,'--null--') + ''')     [ERROR] - ' + 
+			'(' + ISNULL(ERROR_PROCEDURE(),'') + ') - ' + @ERRMSG
+			) as ACT_DESC,
+			isnull(@LST_UPDT_USER_ID,user_name()) as REC_CRTE_USER_ID
+	END CATCH
+
+IF (@TranCnt = 0) AND (@RESULT = 1) BEGIN
+	COMMIT TRANSACTION
+	IF (@DEBUG = 1) 
+		print 'Transaction Committed (csp_UPD_DevicePortConfig)'
+END 
+ELSE IF (@TranCnt = 0) AND (@RESULT = 0) BEGIN
+	ROLLBACK TRANSACTION
+	IF (@DEBUG = 1)
+		print 'Transaction RolledBack (csp_UPD_DevicePortConfig)'
+END
+
+return (@RESULT)
 GO
 
 
@@ -1646,6 +1957,7 @@ CREATE OR ALTER PROCEDURE [dbo].[csp_ADD_DevicePortConfig]
 	@PRT_TYP_ID		TINYINT,
 	@PRT_DIR_CD		CHAR(1) = null,
 	@PRT_CNT		TINYINT, 
+	@PRT_GNDR		CHAR(1) = null,
 	@USR			VARCHAR(60) = null,
 	@PRT_CFG_ID		INT OUTPUT  
 AS
@@ -1665,15 +1977,23 @@ DECLARE @ICnt tinyint = 0
 DECLARE @RESULT INT = 0
 DECLARE @DEV_NAME varchar(100)
 DECLARE @TranCnt int = @@TRANCOUNT
+DECLARE @DEBUG BIT = 0			--USED TO CONTROL DEBUG MESSAGES (1=On/0=Off) -SEE APP_DEFAULTS TABLE KEY=DEBUGSQL
+
+
+--SET DEBUG PREFERENCE (SETS DEBUG FLAG/BIT to 0 or 1)
+SELECT @DEBUG = CASE WHEN CAST(ISNULL(APD.APP_VALUE,'0') as varchar(3)) > 0 THEN 1 ELSE 0 END from dbo.APP_DEFAULTS APD WITH (NOLOCK) WHERE APD.APP_KEY = 'DEBUGSQL'
 
 --Dont add to the transaction pool unless we need to.
-IF	(@TranCnt = 0) BEGIN
+IF (@TranCnt = 0) BEGIN
 	BEGIN TRANSACTION 
-	print 'Transaction Start (csp_ADD_DevicePortConfig)'
+	IF (@DEBUG = 1) BEGIN
+		print 'Transaction Start (csp_ADD_DevicePortConfig)'
+		PRINT 'TRAN COUNT: ' + CAST(@@TRANCOUNT as varchar(3))	
+	END
 END 
 
-	PRINT 'csp_ADD_DevicePortConfig (' + CAST(@DEV_ID as varchar(10)) + ',' + CAST(@PRT_TYP_ID as varchar(10)) + ',''' + @PRT_DIR_CD + ''',' + CAST(@PRT_CNT as varchar(10)) + ',''' + ISNULL(@USR,'dbo') + ''')'
-	PRINT 'TRAN COUNT: ' + CAST(@TranCnt as varchar(3))
+IF (@DEBUG = 1)
+	PRINT 'csp_ADD_DevicePortConfig (' + CAST(@DEV_ID as varchar(10)) + ',' + CAST(@PRT_TYP_ID as varchar(10)) + ',''' + @PRT_DIR_CD + ''',' + CAST(@PRT_CNT as varchar(10)) + ',''' + @PRT_GNDR + ''',''' + ISNULL(@USR,'dbo') + ''')'
 
 	--SET USER ID FOR TRANSACTION
 	IF (@USR is not null)
@@ -1697,8 +2017,8 @@ END
 		--WALK THRU ALL THE PORT TYPE CONNECTIONS AND CREATE A DEVICE_PORT ENTRY
 		SET @ICnt = 0 
 	
-		INSERT INTO dbo.DEVICE_PORT_CONFIG (DEV_ID, PRT_TYP_ID, PRT_DIR_CD, PRT_CNT, REC_CRTE_USER_ID)
-		Select @DEV_ID, @PRT_TYP_ID, @PRT_DIR_CD, @PRT_CNT, @REC_CRTE_USER_ID
+		INSERT INTO dbo.DEVICE_PORT_CONFIG (DEV_ID, PRT_TYP_ID, PRT_DIR_CD, PRT_CNT, PRT_GNDR, REC_CRTE_USER_ID)
+		Select @DEV_ID, @PRT_TYP_ID, @PRT_DIR_CD, @PRT_CNT, @PRT_GNDR, @REC_CRTE_USER_ID
 		SET @PRT_CFG_ID = SCOPE_IDENTITY()
 
 		WHILE (@ICnt < @PRT_CNT) BEGIN
@@ -1713,7 +2033,8 @@ END
 	BEGIN CATCH
 		--ERROR CATCH
 		SET @ERRMSG = '(' + CAST(ERROR_NUMBER() as VARCHAR(10)) + ' - ' + ERROR_MESSAGE() + ')'
-		print 'Failed in (csp_ADD_DevicePortsConfig)'
+		IF (@DEBUG = 1) 
+			print 'Failed in (csp_ADD_DevicePortsConfig)'
 
 		--LOG ERROR IN ACTIVIT RECORD
 		INSERT INTO dbo.AUDIT_ACTIVITY (ACT_TYP_ID, ACT_DEV_ID, ACT_DESC, REC_CRTE_USER_ID)
@@ -1726,14 +2047,17 @@ END
 			isnull(@REC_CRTE_USER_ID,user_name()) as REC_CRTE_USER_ID
 	END CATCH
 
-	IF	(@TranCnt = 0) 
-		IF (@RESULT = 1) BEGIN
-			COMMIT TRANSACTION
-			print 'Transaction Committed (csp_ADD_DevicePortConfig)'
-		END ELSE BEGIN
-			ROLLBACK TRANSACTION
+
+IF (@TranCnt = 0) AND (@RESULT = 1) BEGIN
+	COMMIT TRANSACTION
+	IF (@DEBUG = 1) 
+		print 'Transaction Committed (csp_ADD_DevicePortConfig)'
+END 
+ELSE IF (@TranCnt = 0) AND (@RESULT = 0) BEGIN
+	ROLLBACK TRANSACTION
+	IF (@DEBUG = 1)
 			print 'Transaction RolledBack (csp_ADD_DevicePortConfig)'
-		END
+END
 
 return (@RESULT)
 GO
@@ -1759,15 +2083,22 @@ DECLARE @LST_UPDT_USER_ID as varchar(60)
 DECLARE @PRT_LNK as varchar(255)
 DECLARE @RESULT INT = 0
 DECLARE @TranCnt int = @@TRANCOUNT
+DECLARE @DEBUG BIT = 0			--USED TO CONTROL DEBUG MESSAGES (1=On/0=Off) -SEE APP_DEFAULTS TABLE KEY=DEBUGSQL
+
+--SET DEBUG PREFERENCE (SETS DEBUG FLAG/BIT to 0 or 1)
+SELECT @DEBUG = CASE WHEN CAST(ISNULL(APD.APP_VALUE,'0') as varchar(3)) > 0 THEN 1 ELSE 0 END from dbo.APP_DEFAULTS APD WITH (NOLOCK) WHERE APD.APP_KEY = 'DEBUGSQL'
 
 --Dont add to the transaction pool unless we need to.
-IF	(@TranCnt = 0) BEGIN
+IF(@TranCnt = 0) BEGIN
 	BEGIN TRANSACTION 
-	print 'Transaction Start (csp_DEL_DevicePortConfig)'
+	IF (@DEBUG = 1) BEGIN
+		print 'Transaction Start (csp_DEL_DevicePortConfig)'
+		PRINT 'TRAN COUNT: ' + CAST(@@TRANCOUNT as varchar(3))
+	END
 END
 
+IF (@DEBUG = 1)
 	PRINT 'csp_DEL_DevicePortConfig (' + CAST(@DEV_ID as varchar(10)) + ',' + CAST(@PRT_CFG_ID as varchar(10)) + ',''' + ISNULL(@USR,'dbo') + ''')'
-	PRINT 'TRAN COUNT: ' + CAST(@TranCnt as varchar(3))
 
 	--SET USER ID FOR TRANSACTION
 	IF (@USR is not null)
@@ -1777,96 +2108,96 @@ END
 
 
 	BEGIN TRY
-		IF (1=1) BEGIN
-			--CHECK FOR VALID DEVICE_PORT_CONFIG ID
-			IF (@PRT_CFG_ID = 0) OR NOT EXISTS(SELECT PRT_CFG_ID from dbo.DEVICE_PORT_CONFIG WITH (NOLOCK) WHERE PRT_CFG_ID=@PRT_CFG_ID) BEGIN 
-				SET @MSG = 'Invalid Port Configuration ID Provided. (PRT_CFG_ID=' + CAST(@PRT_CFG_ID as varchar(10)) + ' - NOT VALID!)'
-				RAISERROR (@MSG,15,1) 
-			END 
+		--CHECK FOR VALID DEVICE_PORT_CONFIG ID
+		IF (@PRT_CFG_ID = 0) OR NOT EXISTS(SELECT PRT_CFG_ID from dbo.DEVICE_PORT_CONFIG WITH (NOLOCK) WHERE PRT_CFG_ID=@PRT_CFG_ID) BEGIN 
+			SET @MSG = 'Invalid Port Configuration ID Provided. (PRT_CFG_ID=' + CAST(@PRT_CFG_ID as varchar(10)) + ' - NOT VALID!)'
+			RAISERROR (@MSG,15,1) 
+		END 
 		
-			--CHECK FOR VALID DEVICE ID
-			IF (@DEV_ID = 0) OR NOT EXISTS(SELECT DEV_ID from dbo.DEVICES WITH (NOLOCK) WHERE DEV_ID=@DEV_ID) BEGIN 
-				SET @MSG = 'Invalid Device ID Provided. (DEV_ID=' + CAST(@DEV_ID as varchar(10)) + ' - NOT VALID!)'
-				RAISERROR (@MSG,15,1) 
-			END 
-			ELSE BEGIN
-				--IF DEVICE EXISTS THEN GET NAME OF DEVICE (FOR AUDIT REASONS)
-				SELECT @DEV_NAME = DEV_NAME from dbo.DEVICES WITH (NOLOCK) WHERE DEV_ID=@DEV_ID
-			END
-
-
-			--UNASSIGN ANY INSTRUMENT LINKED TO THIS INSTRUMENTS DEVICE_PORTS SEEING THIS PRT_CFG_ID IS BEING REMOVED
-			--(UNASSOCIATES IT WITH THIS DEVICE)
-
-			--GET PORT LNK SO IT CAN BE REMOVED FROM REFERRING DEVICES
-			Select @PRT_LNK = RTRIM(CAST(DPC.PRT_CFG_ID as VARCHAR(10))) + '.'
-			FROM dbo.DEVICE_PORT_CONFIG DPC WITH (NOLOCK)
-			WHERE DPC.DEV_ID = @DEV_ID AND DPC.PRT_CFG_ID = @PRT_CFG_ID
-		
-			--REMOVE ASSOCIATION
-			UPDATE dbo.DEVICE_PORT_ATTR SET
-				ATTR_VALUE = 0
-			WHERE
-				@PRT_CFG_ID = PRT_CFG_ID
-				AND RTRIM(CAST(PRT_CFG_ID as VARCHAR(10))) + '.' = @PRT_LNK --NOTE: PRT_CFG_ID WILL BE UNIQUE TO EACH TYPE OF PORT TYPE... 
-				AND ATTR_KEY_CD IN ('PRTDEVID','PRT_ASSN')
-
-			--FOR AUDIT REASONS (PRIOR TO DELETE)
-			UPDATE DPA SET 
-				LST_UPDT_USER_ID = @LST_UPDT_USER_ID
-				,LST_UPDT_TS = GetDate()
-			FROM
-				dbo.DEVICE_PORT_CONFIG DPC INNER JOIN dbo.DEVICE_PORT_ATTR DPA
-				ON 
-					DPC.PRT_CFG_ID = DPA.PRT_CFG_ID
-					AND DPC.DEV_ID = @DEV_ID
-					AND DPC.PRT_CFG_ID = @PRT_CFG_ID	
-		
-			--DELETE FROM DEVICE_PORT_ATTR
-			DELETE FROM DPA 
-			FROM
-				dbo.DEVICE_PORT_CONFIG DPC INNER JOIN dbo.DEVICE_PORT_ATTR DPA
-				ON 
-					DPC.PRT_CFG_ID = DPA.PRT_CFG_ID
-					AND DPC.DEV_ID = @DEV_ID
-					AND DPC.PRT_CFG_ID = @PRT_CFG_ID
-
-			--FOR AUDIT REASONS (PRIOR TO DELETE)
-			UPDATE DP SET 
-				LST_UPDT_USER_ID = @LST_UPDT_USER_ID
-				,LST_UPDT_TS = GetDate()
-			FROM
-				dbo.DEVICE_PORT_CONFIG DPC INNER JOIN dbo.DEVICE_PORTS DP
-				ON 
-					DPC.PRT_CFG_ID = DP.PRT_CFG_ID
-					AND DPC.DEV_ID = @DEV_ID
-					AND DPC.PRT_CFG_ID = @PRT_CFG_ID
-
-			--DELETE FROM DEVICE_PORTS
-			DELETE FROM DP
-			FROM
-				dbo.DEVICE_PORT_CONFIG DPC INNER JOIN dbo.DEVICE_PORTS DP
-				ON 
-					DPC.PRT_CFG_ID = DP.PRT_CFG_ID
-					AND DPC.DEV_ID = @DEV_ID
-					AND DPC.PRT_CFG_ID = @PRT_CFG_ID
-
-
-			--FOR AUDIT REASONS (PRIOR TO DELETE)
-			UPDATE dbo.DEVICE_PORT_CONFIG SET 
-				LST_UPDT_USER_ID = @LST_UPDT_USER_ID
-				,LST_UPDT_TS = GetDate()
-			WHERE DEV_ID = @DEV_ID AND PRT_CFG_ID = @PRT_CFG_ID
-
-			--DELETE FROM DEVICE_PORT_CONFIG
-			DELETE FROM dbo.DEVICE_PORT_CONFIG WHERE DEV_ID = @DEV_ID AND PRT_CFG_ID = @PRT_CFG_ID
+		--CHECK FOR VALID DEVICE ID
+		IF (@DEV_ID = 0) OR NOT EXISTS(SELECT DEV_ID from dbo.DEVICES WITH (NOLOCK) WHERE DEV_ID=@DEV_ID) BEGIN 
+			SET @MSG = 'Invalid Device ID Provided. (DEV_ID=' + CAST(@DEV_ID as varchar(10)) + ' - NOT VALID!)'
+			RAISERROR (@MSG,15,1) 
+		END 
+		ELSE BEGIN
+			--IF DEVICE EXISTS THEN GET NAME OF DEVICE (FOR AUDIT REASONS)
+			SELECT @DEV_NAME = DEV_NAME from dbo.DEVICES WITH (NOLOCK) WHERE DEV_ID=@DEV_ID
 		END
+
+
+		--UNASSIGN ANY INSTRUMENT LINKED TO THIS INSTRUMENTS DEVICE_PORTS SEEING THIS PRT_CFG_ID IS BEING REMOVED
+		--(UNASSOCIATES IT WITH THIS DEVICE)
+
+		--GET PORT LNK SO IT CAN BE REMOVED FROM REFERRING DEVICES
+		Select @PRT_LNK = RTRIM(CAST(DPC.PRT_CFG_ID as VARCHAR(10))) + '.'
+		FROM dbo.DEVICE_PORT_CONFIG DPC WITH (NOLOCK)
+		WHERE DPC.DEV_ID = @DEV_ID AND DPC.PRT_CFG_ID = @PRT_CFG_ID
+		
+		--REMOVE ASSOCIATION
+		UPDATE dbo.DEVICE_PORT_ATTR SET
+			ATTR_VALUE = 0
+		WHERE
+			@PRT_CFG_ID = PRT_CFG_ID
+			AND RTRIM(CAST(PRT_CFG_ID as VARCHAR(10))) + '.' = @PRT_LNK --NOTE: PRT_CFG_ID WILL BE UNIQUE TO EACH TYPE OF PORT TYPE... 
+			AND ATTR_KEY_CD IN ('LOD_ASSN','PRT_ASSN')
+
+		--FOR AUDIT REASONS (PRIOR TO DELETE)
+		UPDATE DPA SET 
+			LST_UPDT_USER_ID = @LST_UPDT_USER_ID
+			,LST_UPDT_TS = GetDate()
+		FROM
+			dbo.DEVICE_PORT_CONFIG DPC INNER JOIN dbo.DEVICE_PORT_ATTR DPA
+			ON 
+				DPC.PRT_CFG_ID = DPA.PRT_CFG_ID
+				AND DPC.DEV_ID = @DEV_ID
+				AND DPC.PRT_CFG_ID = @PRT_CFG_ID	
+		
+		--DELETE FROM DEVICE_PORT_ATTR
+		DELETE FROM DPA 
+		FROM
+			dbo.DEVICE_PORT_CONFIG DPC INNER JOIN dbo.DEVICE_PORT_ATTR DPA
+			ON 
+				DPC.PRT_CFG_ID = DPA.PRT_CFG_ID
+				AND DPC.DEV_ID = @DEV_ID
+				AND DPC.PRT_CFG_ID = @PRT_CFG_ID
+
+		--FOR AUDIT REASONS (PRIOR TO DELETE)
+		UPDATE DP SET 
+			LST_UPDT_USER_ID = @LST_UPDT_USER_ID
+			,LST_UPDT_TS = GetDate()
+		FROM
+			dbo.DEVICE_PORT_CONFIG DPC INNER JOIN dbo.DEVICE_PORTS DP
+			ON 
+				DPC.PRT_CFG_ID = DP.PRT_CFG_ID
+				AND DPC.DEV_ID = @DEV_ID
+				AND DPC.PRT_CFG_ID = @PRT_CFG_ID
+
+		--DELETE FROM DEVICE_PORTS
+		DELETE FROM DP
+		FROM
+			dbo.DEVICE_PORT_CONFIG DPC INNER JOIN dbo.DEVICE_PORTS DP
+			ON 
+				DPC.PRT_CFG_ID = DP.PRT_CFG_ID
+				AND DPC.DEV_ID = @DEV_ID
+				AND DPC.PRT_CFG_ID = @PRT_CFG_ID
+
+
+		--FOR AUDIT REASONS (PRIOR TO DELETE)
+		UPDATE dbo.DEVICE_PORT_CONFIG SET 
+			LST_UPDT_USER_ID = @LST_UPDT_USER_ID
+			,LST_UPDT_TS = GetDate()
+		WHERE DEV_ID = @DEV_ID AND PRT_CFG_ID = @PRT_CFG_ID
+
+		--DELETE FROM DEVICE_PORT_CONFIG
+		DELETE FROM dbo.DEVICE_PORT_CONFIG WHERE DEV_ID = @DEV_ID AND PRT_CFG_ID = @PRT_CFG_ID
+		
 		SET @RESULT = 1
 	END TRY
 	BEGIN CATCH
 		--ERROR CATCH
 		SET @ERRMSG = '(' + CAST(ERROR_NUMBER() as VARCHAR(10)) + ' - ' + ERROR_MESSAGE() + ')'
-		print 'Failed in (csp_DEL_DevicePortsConfig)'
+		IF (@DEBUG = 1) 
+			print 'Failed in (csp_DEL_DevicePortsConfig)'
 
 		--LOG ERROR IN ACTIVIT RECORD
 		INSERT INTO dbo.AUDIT_ACTIVITY (ACT_TYP_ID, ACT_DEV_ID, ACT_DESC, REC_CRTE_USER_ID)
@@ -1879,14 +2210,16 @@ END
 			isnull(@LST_UPDT_USER_ID,user_name()) as REC_CRTE_USER_ID
 	END CATCH
 
-	IF	(@TranCnt = 0) 
-		IF (@RESULT = 1) BEGIN
-			COMMIT TRANSACTION
-			print 'Transaction committed (csp_DEL_DevicePortConfig)'
-		END ELSE BEGIN
-			ROLLBACK TRANSACTION
-			print 'Transaction Rolledback (csp_DEL_DevicePortConfig)'
-		END
+IF (@TranCnt = 0) AND (@RESULT = 1) BEGIN
+	COMMIT TRANSACTION
+	IF (@DEBUG = 1) 
+		print 'Transaction Committed (csp_DEL_DevicePortConfig)'
+END 
+ELSE IF (@TranCnt = 0) AND (@RESULT = 0) BEGIN
+	ROLLBACK TRANSACTION
+	IF (@DEBUG = 1)
+		print 'Transaction RolledBack (csp_DEL_DevicePortConfig)'
+END
 
 return (@RESULT)
 GO
@@ -1907,23 +2240,31 @@ SET NOCOUNT ON
 -- UPDATES:	
 -- 10/18/2020 - TCW - Intial Creationg of [csp_ADJUST_DevicePorts]
 ------------------------------------------------------------------------------------------------------------------
-
 DECLARE @ERRMSG varchar(2048)
 DECLARE @MSG as varchar(2048)
 DECLARE @REC_CRTE_USER_ID varchar(60)
 DECLARE @RESULT INT = 0
+DECLARE @ICnt int = 0
+DECLARE @POS_START int = 0
 DECLARE @DEV_NAME varchar(100)
 DECLARE @TranCnt int = @@TRANCOUNT
+DECLARE @MISMATCHED bit = 0
+DECLARE @MATHGOOD BIT = 0
+DECLARE @DEBUG BIT = 0			--USED TO CONTROL DEBUG MESSAGES (1=On/0=Off) -SEE APP_DEFAULTS TABLE KEY=DEBUGSQL
 
-
---csp_ADJUST_DevicePorts (1,5,'S',16,'TommyBoyAZ')
+--SET DEBUG PREFERENCE (SETS DEBUG FLAG/BIT to 0 or 1)
+SELECT @DEBUG = CASE WHEN CAST(ISNULL(APD.APP_VALUE,'0') as varchar(3)) > 0 THEN 1 ELSE 0 END from dbo.APP_DEFAULTS APD WITH (NOLOCK) WHERE APD.APP_KEY = 'DEBUGSQL'
 
 --Dont add to the transaction pool unless we need to.
-IF	(@TranCnt = 0) BEGIN
+IF (@TranCnt = 0) BEGIN
 	BEGIN TRANSACTION 
-	PRINT 'TRANSACTION STARTED (CSP_ADJUST_DEVICEPORTS)'
-END 
+	IF (@DEBUG = 1) BEGIN
+		print 'Transaction Start (csp_ADJUST_DevicePorts)'
+		PRINT 'TRAN COUNT: ' + CAST(@@TRANCOUNT as varchar(3))
+	END
+END
 
+IF (@DEBUG=1)
 	PRINT 'csp_ADJUST_DevicePorts (' + CAST(@DEV_ID as varchar(10)) + ',' + CAST(@PRT_CFG_ID as varchar(10)) + ',''' + @PRT_ACT + ''',' + CAST(@PRT_CNT as varchar(10)) + ',''' + ISNULL(@USR,'dbo') + ''')'
 
 	--SET USER ID FOR TRANSACTION
@@ -1933,7 +2274,7 @@ END
 		SET @REC_CRTE_USER_ID = USER_NAME()
 
 
-	--BEGIN TRY
+	BEGIN TRY
 		--CHECK FOR VALID DEVICE_PORT_CONFIG ID
 		IF (@PRT_CFG_ID = 0) OR NOT EXISTS(SELECT PRT_CFG_ID from dbo.DEVICE_PORT_CONFIG WITH (NOLOCK) WHERE PRT_CFG_ID=@PRT_CFG_ID) BEGIN 
 			SET @MSG = 'Invalid Port Configuration ID Provided. (PRT_CFG_ID=' + CAST(@PRT_CFG_ID as varchar(10)) + ' - NOT VALID!)'
@@ -1950,45 +2291,193 @@ END
 			SELECT @DEV_NAME = DEV_NAME from dbo.DEVICES WITH (NOLOCK) WHERE DEV_ID=@DEV_ID
 		END
 
+		--GATHER ANALYSIS DATA TO CHECK FOR MISMATCHED PORT_CONFIGURATIONS (IF SO FIX THEM)
+		Select 
+			@POS_START = MAX(DP.PRT_ID)
+			,@MISMATCHED = CASE WHEN COUNT(DP.PRT_ID) = MAX(DP.PRT_ID)  THEN 0 ELSE 1 END
+			,@MATHGOOD = CASE 
+							WHEN DPC.PRT_CNT = CASE 
+								WHEN @PRT_ACT = 'S' THEN COUNT(DP.PRT_ID) - @PRT_CNT  
+								WHEN @PRT_ACT = 'N' THEN COUNT(DP.PRT_ID)  
+								ELSE COUNT(DP.PRT_ID) + @PRT_CNT 
+							END THEN 1 ELSE 0 
+						END
+		from 
+			dbo.DEVICE_PORT_CONFIG DPC WITH (NOLOCK)
+			INNER JOIN dbo.DEVICE_PORTS DP WITH (NOLOCK) 
+			ON	DPC.PRT_CFG_ID = DP.PRT_CFG_ID
+				AND @DEV_ID = DPC.DEV_ID
+				AND @PRT_CFG_ID = DPC.PRT_CFG_ID
+		GROUP BY DPC.PRT_CNT
 		
 
-		UPDATE dbo.DEVICE_PORTS SET
-			LST_UPDT_TS = GetDate()
-			,LST_UPDT_USER_ID = @REC_CRTE_USER_ID
-		WHERE
-			@PRT_CFG_ID = PRT_CFG_ID
-			AND PRT_ID >		
-		
+		IF (@MISMATCHED = 1 OR @MATHGOOD = 0) BEGIN
+			-- THIS SHOULD NEVER HAPPEN, BUT IF IT DOES ATTEMPT TO CORRECT IT
+			IF (@DEBUG = 1) 
+				PRINT 'PORT MUST BE REBUILT - THERE IS A MISMATCH'
+
+				--REMOVE DEVICE_PORTS 
+					
+				--REMOVE DEVICE_PORT_ATTR
+
+				--RE-ADD DEVICE_PORTS 
+
+				--RE-ADD 
+		END
+
+		IF (@MISMATCHED = 0 AND @MATHGOOD = 1) BEGIN
+			-- THIS SHOULD NEVER HAPPEN, BUT IF IT DOES ATTEMPT TO CORRECT IT
+			IF (@DEBUG = 1) 
+				PRINT 'ACTION TO ''' + CASE WHEN @PRT_ACT = 'S' THEN 'REMOVE' ELSE 'ADD' END + ''' PORTS PASSED VALIDATION.'
+
+			SET @ICnt = @POS_START
+			
+			IF (@PRT_ACT = 'S') BEGIN
+				if (@DEBUG = 1) 
+					print 'SUBTRACTING PORT INFO FOR PRT_CFG_ID: ' + CAST(@PRT_CFG_ID as varchar(10)) + " (" + CAST(@PRT_CNT as varchar(3)) + ")"
+				--UPDATE DEVICE_PORTS (FOR AUDIT REASONS)
+				UPDATE DP SET
+					LST_UPDT_TS = GetDate()
+					,LST_UPDT_USER_ID = @REC_CRTE_USER_ID
+				FROM 
+					dbo.DEVICE_PORT_CONFIG DPC WITH (NOLOCK)
+					INNER JOIN dbo.DEVICE_PORTS DP
+					ON
+						DPC.PRT_CFG_ID = DP.PRT_CFG_ID
+						AND @DEV_ID = DPC.DEV_ID
+						AND @PRT_CFG_ID = DPC.PRT_CFG_ID
+						AND (@POS_START-@PRT_CNT ) < DP.PRT_ID
+
+				--UPDATE DEVICE_PORT_ATTR (FOR AUDIT REASONS)
+				UPDATE DPA SET
+					LST_UPDT_TS = GetDate()
+					,LST_UPDT_USER_ID = @REC_CRTE_USER_ID
+				FROM 
+					dbo.DEVICE_PORT_CONFIG DPC WITH (NOLOCK)
+					INNER JOIN dbo.DEVICE_PORTS DP WITH (NOLOCK)
+					ON
+						DPC.PRT_CFG_ID = DP.PRT_CFG_ID
+						AND @DEV_ID = DPC.DEV_ID
+						AND @PRT_CFG_ID = DPC.PRT_CFG_ID
+						AND (@POS_START-@PRT_CNT ) < DP.PRT_ID
+					INNER JOIN dbo.DEVICE_PORT_ATTR DPA 
+					ON
+						DPC.PRT_CFG_ID = DPA.PRT_CFG_ID
+						AND DP.PRT_ID = DPA.PRT_ID
+				
+				--REMOVE EXCESS PORTS FOR DEVICE_PORT_ATTR
+				DELETE FROM DPA
+				FROM 
+					dbo.DEVICE_PORT_CONFIG DPC WITH (NOLOCK)
+					INNER JOIN dbo.DEVICE_PORTS DP WITH (NOLOCK)
+					ON
+						DPC.PRT_CFG_ID = DP.PRT_CFG_ID
+						AND @DEV_ID = DPC.DEV_ID
+						AND @PRT_CFG_ID = DPC.PRT_CFG_ID
+						AND (@POS_START-@PRT_CNT ) < DP.PRT_ID
+					INNER JOIN dbo.DEVICE_PORT_ATTR DPA 
+					ON
+						DPC.PRT_CFG_ID = DPA.PRT_CFG_ID
+						AND DP.PRT_ID = DPA.PRT_ID
+
+				--REMOVE EXCESS PORTS FOR DEVICE_PORTS
+				DELETE FROM DP
+				FROM 
+					dbo.DEVICE_PORT_CONFIG DPC WITH (NOLOCK)
+					INNER JOIN dbo.DEVICE_PORTS DP
+					ON
+						DPC.PRT_CFG_ID = DP.PRT_CFG_ID
+						AND @DEV_ID = DPC.DEV_ID
+						AND @PRT_CFG_ID = DPC.PRT_CFG_ID
+						AND (@POS_START-@PRT_CNT ) < DP.PRT_ID
+			END
+			ELSE IF (@PRT_ACT = 'A') BEGIN
+				if (@DEBUG = 1) 
+					print 'ADDING PORT INFO FOR PRT_CFG_ID: ' + CAST(@PRT_CFG_ID as varchar(10)) + " (" + CAST(@PRT_CNT as varchar(3)) + ")"
+				
+				WHILE (@ICnt < (@POS_START + @PRT_CNT)) BEGIN
+					--INSERT PRT_ID INTO DEVICE_PORTS TABLE
+					INSERT INTO dbo.DEVICE_PORTS (PRT_CFG_ID, PRT_ID, REC_CRTE_USER_ID)
+					Select @PRT_CFG_ID, @ICnt+1, @REC_CRTE_USER_ID
+
+					SET @ICnt += 1
+				END
+			END
+			IF (@PRT_ACT IN ('A','N')) BEGIN
+				--HANDLE THE MISSING PORT ATTRIBUTE ENTRIES IN BULK FOR EACH LAYOUT
+				INSERT INTO dbo.DEVICE_PORT_ATTR (LO_ID, PRT_CFG_ID, PRT_ID, ATTR_KEY_CD, ATTR_VALUE, REC_CRTE_USER_ID)
+				Select 
+					L.LO_ID
+					,DRV.PRT_CFG_ID
+					,DRV.PRT_ID
+					,CC.COMM_CD as ATTR_KEY_CD
+					,REPLACE(
+						REPLACE(
+							REPLACE(dbo.fnc_AppSettingValue(CC.COMM_CD),'@VAL',RTRIM(CAST(DRV.PRT_ID as varchar(3))))
+						,'@PT',RTRIM(dbo.fnc_PortToText(DRV.PRT_TYP_ID)))
+					,'@CT',RTRIM(ISNULL(dbo.fnc_CommonCodeTXT(DRV.PRT_DIR_CD,'PORT_DIR'),''))) as ATTR_VALUE
+					,DRV.REC_CRTE_USER_ID
+				FROM (
+					Select
+						DPC.DEV_ID
+						,DPC.PRT_TYP_ID
+						,DPC.PRT_DIR_CD
+						,DP.PRT_CFG_ID, DP.PRT_ID, 1 LO_ID, DP.REC_CRTE_TS, DP.REC_CRTE_USER_ID, DP.LST_UPDT_TS, DP.LST_UPDT_USER_ID
+					FROM
+						dbo.DEVICE_PORT_CONFIG DPC WITH (NOLOCK)
+						INNER JOIN dbo.DEVICE_PORTS DP WITH (NOLOCK)
+						ON
+							DPC.PRT_CFG_ID = DP.PRT_CFG_ID
+							AND @DEV_ID = DPC.DEV_ID 
+							AND @PRT_CFG_ID = DPC.PRT_CFG_ID
+						FULL OUTER JOIN
+						dbo.DEVICE_PORT_ATTR DPA 
+						ON
+							DPC.PRT_CFG_ID = DPA.PRT_CFG_ID
+							AND DP.PRT_ID = DPA.PRT_ID
+					WHERE 
+						DP.PRT_ID IS NOT NULL
+						AND DPA.PRT_ID IS NULL
+				) DRV,
+				dbo.COMMON_CODES CC WITH (NOLOCK),
+				dbo.LAYOUTS L WITH (NOLOCK)
+				WHERE
+					L.LO_DEV_ID = DRV.DEV_ID
+					AND CC.COMM_TYPE_CD ='PRT_ATTR'
+
+			END
+		END
 		
 		SET @RESULT=1
 
-	--END TRY
-	--BEGIN CATCH
-	--	--ERROR CATCH
-	--	SET @ERRMSG = '(' + CAST(ISNULL(ERROR_NUMBER(),'') as VARCHAR(10)) + ' - ' + ERROR_MESSAGE() + ')'
-	--	print 'Failed in (csp_ADJUST_DevicePorts)'
+	END TRY
+	BEGIN CATCH
+		--ERROR CATCH
+		SET @ERRMSG = '(' + CAST(ISNULL(ERROR_NUMBER(),'') as VARCHAR(10)) + ' - ' + ERROR_MESSAGE() + ')'
+		IF (@DEBUG=1)
+			print 'Failed in (csp_ADJUST_DevicePorts)'
 
-	--	--LOG ERROR IN ACTIVIT RECORD
-	--	INSERT INTO dbo.AUDIT_ACTIVITY (ACT_TYP_ID, ACT_DEV_ID, ACT_DESC, REC_CRTE_USER_ID)
-	--	Select
-	--		dbo.fnc_GetActivityID('DEVICE_ERR') as ACT_TYP_ID,
-	--		@DEV_ID,
-	--		RTRIM('<<DEVICE PORT ATTR ADJUSTMENT ERROR>>  -  [DEV_NAME] - (''' + ISNULL(@DEV_NAME,'--null--') + '''), [PRT_CFG_ID] - ( ' + CAST(@PRT_CFG_ID as varchar(10)) + ' ), ' +
-	--		'[LO_ID] - ( ' + CAST(ISNULL(@TSK_LO_ID,'--null--') as varchar(10)) + ' )    [ERROR] - ' + 
-	--		'(' + ISNULL(ERROR_PROCEDURE(),'') + ') - ' + @ERRMSG
-	--		) as ACT_DESC,
-	--		isnull(@REC_CRTE_USER_ID,user_name()) as REC_CRTE_USER_ID
-	--END CATCH
+		--LOG ERROR IN ACTIVIT RECORD
+		INSERT INTO dbo.AUDIT_ACTIVITY (ACT_TYP_ID, ACT_DEV_ID, ACT_DESC, REC_CRTE_USER_ID)
+		Select
+			dbo.fnc_GetActivityID('PORT_ATTR_ERR') as ACT_TYP_ID,
+			@DEV_ID,
+			RTRIM('<<DEVICE PORT ATTR ADJUSTMENT ERROR>>  -  [DEV_NAME] - (''' + ISNULL(@DEV_NAME,'--null--') + '''), [PRT_CFG_ID] - ( ' + CAST(@PRT_CFG_ID as varchar(10)) + ' )    [ERROR] - ' + 
+			'(' + ISNULL(ERROR_PROCEDURE(),'') + ') - ' + @ERRMSG
+			) as ACT_DESC,
+			isnull(@REC_CRTE_USER_ID,user_name()) as REC_CRTE_USER_ID
+	END CATCH
 
-	IF	(@TranCnt = 0) 
-		IF (@RESULT = 1) BEGIN
-			COMMIT TRANSACTION
-			print 'Transaction committed (csp_ADJUST_DevicePorts)'
-		END ELSE BEGIN
-			ROLLBACK TRANSACTION
-			print 'Transaction rolledback (csp_ADJUST_DevicePorts)'
-		END
-
+IF	(@TranCnt = 0) AND (@RESULT = 1) BEGIN
+	COMMIT TRANSACTION
+	IF (@DEBUG=1)
+		print 'Transaction committed (csp_ADJUST_DevicePorts)'
+END 
+ELSE IF	(@TranCnt = 0) AND (@RESULT = 0) BEGIN
+	ROLLBACK TRANSACTION
+	IF (@DEBUG=1)
+		print 'Transaction rolledback (csp_ADJUST_DevicePorts)'
+END
 return (@RESULT)
 GO
 
@@ -2177,6 +2666,181 @@ return
 GO
 
 
+CREATE OR ALTER PROCEDURE [dbo].[csp_UPD_Device_Port_Attr]
+	@PRT_CFG_ID		INT,
+	@PRT_ID			INT,
+	@LO_ID			INT,
+	@ATTR_KEY_CD	CHAR(8) = null, 
+	@ATTR_VALUE     VARCHAR(255) = null,
+	@USR			VARCHAR(60) = null
+AS
+SET NOCOUNT ON
+------------------------------------------------------------------------------------------------------------------
+-- AUTHOR : Thomas Wallace		   DATE: 10/07/2020
+-- PURPOSE: Handles 
+------------------------------------------------------------------------------------------------------------------
+-- UPDATES:	
+-- 10/07/2020 - TCW - Intial Creationg of csp_UPD_Device_Port_Attr
+------------------------------------------------------------------------------------------------------------------
+DECLARE @ERRMSG as varchar(2048)
+DECLARE @MSG as varchar(2048)
+DECLARE @LST_UPDT_USER_ID as varchar(60)
+DECLARE @DEV_ID INT
+DECLARE @DEV_NAME varchar(100)
+DECLARE @RESULTS INT = 1
+
+BEGIN TRANSACTION 
+	--SET USER ID FOR TRANSACTION
+	IF (@USR is not null)
+		SET @LST_UPDT_USER_ID = @USR
+	else
+		SET @LST_UPDT_USER_ID = USER_NAME()
+
+	BEGIN TRY
+		--CHECK FOR VALID PORT CONFIG ID (SHOULD NEVER HAPPEN BUT SAFEGAURD CHECK)
+		IF (@PRT_CFG_ID = 0) OR NOT EXISTS(SELECT PRT_CFG_ID from dbo.DEVICES_PORT_CONFIG WITH (NOLOCK) WHERE PRT_CFG_ID=@PRT_CFG_ID) BEGIN 
+			SET @MSG = 'Invalid Port Config ID Provided. (PRT_CFG_ID=' + CAST(@PRT_CFG_ID as varchar(10)) + ' - NOT VALID!)'
+			RAISERROR (@MSG,15,1) 
+		END 
+		ELSE BEGIN
+			--IF DEVICE EXISTS THEN GET NAME & ID OF DEVICE (FOR AUDIT REASONS)
+			SELECT 
+				@DEV_NAME = D.DEV_NAME 
+				,@DEV_ID = D.DEV_ID
+			from 
+				dbo.DEVICES D WITH (NOLOCK) 
+				INNER JOIN dbo.DEVICE_PORT_CONFIG DPC WITH (NOLOCK)
+				ON 
+					D.DEV_ID = DPC.DEV_ID
+					AND DPC.PRT_CFG_ID = @PRT_CFG_ID
+		END
+
+		--CHECK FOR VALID LAYOUT ID (SHOULD NEVER HAPPEN BUT SAFEGAURD CHECK)
+		IF (@LO_ID = 0) OR NOT EXISTS(SELECT LO_ID from dbo.LAYOUTS WITH (NOLOCK) WHERE LO_ID=@LO_ID) BEGIN 
+			SET @MSG = 'Invalid Layout ID Provided. (LO_ID=' + CAST(@LO_ID as varchar(10)) + ' - NOT VALID!)'
+			RAISERROR (@MSG,15,1) 
+		END
+
+		--BUILD DEVICE PORT ATTR RECORD
+		UPDATE dbo.DEVICE_PORT_ATTR SET 
+			ATTR_VALUE = dbo.fnc_StripSpcChars(@ATTR_VALUE)
+			,LST_UPDT_TS = GetDate()
+			,LST_UPDT_USER_ID = @LST_UPDT_USER_ID
+		WHERE
+			@PRT_CFG_ID = PRT_CFG_ID
+			AND @PRT_ID = PRT_ID
+			AND @LO_ID = LO_ID
+			AND @ATTR_KEY_CD = ATTR_KEY_CD
+
+
+		COMMIT TRANSACTION
+	END TRY
+	BEGIN CATCH
+		--ERROR CATCH
+		ROLLBACK TRANSACTION
+
+		SET @ERRMSG = '(' + CAST(ERROR_NUMBER() as VARCHAR(10)) + ' - ' + ERROR_MESSAGE() + ')'
+		
+		--LOG ERROR IN ACTIVIT RECORD
+		INSERT INTO dbo.AUDIT_ACTIVITY (ACT_TYP_ID, ACT_DEV_ID, ACT_DESC, REC_CRTE_USER_ID)
+		Select
+			dbo.fnc_GetActivityID('PORT_ATTR_ERR') as ACT_TYP_ID,
+			@DEV_ID,
+			RTRIM('<<DEVICE PORT ATTR UPDATE ERROR>>  -  [DEV_NAME] - (''' + ISNULL(@DEV_NAME,'--null--') + ''')     [ERROR] - ' + 
+			'(' + ISNULL(ERROR_PROCEDURE(),'') + ') - ' + @ERRMSG
+			) as ACT_DESC,
+			isnull(@LST_UPDT_USER_ID,user_name()) as REC_CRTE_USER_ID
+
+		SET @RESULTS = 0
+	END CATCH
+
+return (@RESULTS)
+GO
+
+
+CREATE OR ALTER PROCEDURE [dbo].[csp_UPD_Device_EXT_Attr]
+	@DEV_ID			INT,
+	@LO_ID			INT,
+	@ATTR_KEY_CD	CHAR(8) = null, 
+	@ATTR_VALUE     VARCHAR(255) = null,
+	@USR			VARCHAR(60) = null
+AS
+SET NOCOUNT ON
+------------------------------------------------------------------------------------------------------------------
+-- AUTHOR : Thomas Wallace		   DATE: 10/07/2020
+-- PURPOSE: Handles 
+------------------------------------------------------------------------------------------------------------------
+-- UPDATES:	
+-- 10/07/2020 - TCW - Intial Creationg of csp_UPD_Device_Port_Attr
+------------------------------------------------------------------------------------------------------------------
+DECLARE @ERRMSG as varchar(2048)
+DECLARE @MSG as varchar(2048)
+DECLARE @LST_UPDT_USER_ID as varchar(60)
+DECLARE @DEV_NAME varchar(100)
+DECLARE @RESULTS int = 1
+
+BEGIN TRANSACTION 
+	--SET USER ID FOR TRANSACTION
+	IF (@USR is not null)
+		SET @LST_UPDT_USER_ID = @USR
+	else
+		SET @LST_UPDT_USER_ID = USER_NAME()
+
+	BEGIN TRY
+		--CHECK FOR VALID DEVICE ID (SHOULD NEVER HAPPEN BUT SAFEGAURD CHECK)
+		IF (@DEV_ID = 0) OR NOT EXISTS(SELECT DEV_ID from dbo.DEVICES WITH (NOLOCK) WHERE DEV_ID=@DEV_ID) BEGIN 
+			SET @MSG = 'Invalid Device ID Provided. (DEV_ID=' + CAST(@DEV_ID as varchar(10)) + ' - NOT VALID!)'
+			RAISERROR (@MSG,15,1) 
+		END 
+		ELSE BEGIN
+			--IF DEVICE EXISTS THEN GET NAME OF DEVICE (FOR AUDIT REASONS)
+			SELECT @DEV_NAME = DEV_NAME from dbo.DEVICES WITH (NOLOCK) WHERE DEV_ID=@DEV_ID
+		END
+
+		--CHECK FOR VALID LAYOUT ID (SHOULD NEVER HAPPEN BUT SAFEGAURD CHECK)
+		IF (@LO_ID = 0) OR NOT EXISTS(SELECT LO_ID from dbo.LAYOUTS WITH (NOLOCK) WHERE LO_ID=@LO_ID) BEGIN 
+			SET @MSG = 'Invalid Layout ID Provided. (LO_ID=' + CAST(@LO_ID as varchar(10)) + ' - NOT VALID!)'
+			RAISERROR (@MSG,15,1) 
+		END
+
+		--BUILD DEVICE EXT ATTR RECORD
+		UPDATE dbo.DEVICE_EXT_ATTR SET 
+			ATTR_VALUE = dbo.fnc_StripSpcChars(@ATTR_VALUE)
+			,LST_UPDT_TS = GetDate()
+			,LST_UPDT_USER_ID = @LST_UPDT_USER_ID
+		WHERE
+			@LO_ID = LO_ID
+			AND @DEV_ID = DEV_ID
+			AND @ATTR_KEY_CD = ATTR_KEY_CD
+
+
+		COMMIT TRANSACTION
+	END TRY
+	BEGIN CATCH
+		--ERROR CATCH
+		ROLLBACK TRANSACTION
+
+		SET @ERRMSG = '(' + CAST(ERROR_NUMBER() as VARCHAR(10)) + ' - ' + ERROR_MESSAGE() + ')'
+		
+		--LOG ERROR IN ACTIVIT RECORD
+		INSERT INTO dbo.AUDIT_ACTIVITY (ACT_TYP_ID, ACT_DEV_ID, ACT_DESC, REC_CRTE_USER_ID)
+		Select
+			dbo.fnc_GetActivityID('DEVICE_ATTR_ERR') as ACT_TYP_ID,
+			@DEV_ID,
+			RTRIM('<<DEVICE EXT ATTR UPDATE ERROR>>  -  [DEV_NAME] - (''' + ISNULL(@DEV_NAME,'--null--') + ''')     [ERROR] - ' + 
+			'(' + ISNULL(ERROR_PROCEDURE(),'') + ') - ' + @ERRMSG
+			) as ACT_DESC,
+			isnull(@LST_UPDT_USER_ID,user_name()) as REC_CRTE_USER_ID
+		
+		SET @RESULTS = 0
+
+	END CATCH
+
+return(@RESULTS)
+GO
+
+
+/** csp_ADD_Device_Port_Attr (NOT USED CURRENTLY)
 CREATE OR ALTER PROCEDURE [dbo].[csp_ADD_Device_Port_Attr]
 	@PRT_CFG_ID		INT,
 	@PRT_ID			INT,
@@ -2270,101 +2934,11 @@ IF	(@TranCnt = 0)
 		END
 
 return (@RESULT)
+*/
 GO
 
 
-CREATE OR ALTER PROCEDURE [dbo].[csp_UPDATE_Device_Port_Attr]
-	@PRT_CFG_ID		INT,
-	@PRT_ID			INT,
-	@LO_ID			INT,
-	@ATTR_KEY_CD	CHAR(8) = null, 
-	@ATTR_VALUE     VARCHAR(255) = null,
-	@USR			VARCHAR(60) = null
-AS
-SET NOCOUNT ON
-------------------------------------------------------------------------------------------------------------------
--- AUTHOR : Thomas Wallace		   DATE: 10/07/2020
--- PURPOSE: Handles 
-------------------------------------------------------------------------------------------------------------------
--- UPDATES:	
--- 10/07/2020 - TCW - Intial Creationg of csp_UPDATE_Device_Port_Attr
-------------------------------------------------------------------------------------------------------------------
-DECLARE @ERRMSG as varchar(2048)
-DECLARE @MSG as varchar(2048)
-DECLARE @LST_UPDT_USER_ID as varchar(60)
-DECLARE @DEV_ID INT
-DECLARE @DEV_NAME varchar(100)
-DECLARE @RESULTS INT = 1
-
-BEGIN TRANSACTION 
-	--SET USER ID FOR TRANSACTION
-	IF (@USR is not null)
-		SET @LST_UPDT_USER_ID = @USR
-	else
-		SET @LST_UPDT_USER_ID = USER_NAME()
-
-	BEGIN TRY
-		--CHECK FOR VALID PORT CONFIG ID (SHOULD NEVER HAPPEN BUT SAFEGAURD CHECK)
-		IF (@PRT_CFG_ID = 0) OR NOT EXISTS(SELECT PRT_CFG_ID from dbo.DEVICES_PORT_CONFIG WITH (NOLOCK) WHERE PRT_CFG_ID=@PRT_CFG_ID) BEGIN 
-			SET @MSG = 'Invalid Port Config ID Provided. (PRT_CFG_ID=' + CAST(@PRT_CFG_ID as varchar(10)) + ' - NOT VALID!)'
-			RAISERROR (@MSG,15,1) 
-		END 
-		ELSE BEGIN
-			--IF DEVICE EXISTS THEN GET NAME & ID OF DEVICE (FOR AUDIT REASONS)
-			SELECT 
-				@DEV_NAME = D.DEV_NAME 
-				,@DEV_ID = D.DEV_ID
-			from 
-				dbo.DEVICES D WITH (NOLOCK) 
-				INNER JOIN dbo.DEVICE_PORT_CONFIG DPC WITH (NOLOCK)
-				ON 
-					D.DEV_ID = DPC.DEV_ID
-					AND DPC.PRT_CFG_ID = @PRT_CFG_ID
-		END
-
-		--CHECK FOR VALID LAYOUT ID (SHOULD NEVER HAPPEN BUT SAFEGAURD CHECK)
-		IF (@LO_ID = 0) OR NOT EXISTS(SELECT LO_ID from dbo.LAYOUTS WITH (NOLOCK) WHERE LO_ID=@LO_ID) BEGIN 
-			SET @MSG = 'Invalid Layout ID Provided. (LO_ID=' + CAST(@LO_ID as varchar(10)) + ' - NOT VALID!)'
-			RAISERROR (@MSG,15,1) 
-		END
-
-		--BUILD DEVICE PORT ATTR RECORD
-		UPDATE dbo.DEVICE_PORT_ATTR SET 
-			ATTR_VALUE = dbo.fnc_StripSpcChars(@ATTR_VALUE)
-			,LST_UPDT_TS = GetDate()
-			,LST_UPDT_USER_ID = @LST_UPDT_USER_ID
-		WHERE
-			@PRT_CFG_ID = PRT_CFG_ID
-			AND @PRT_ID = PRT_ID
-			AND @LO_ID = LO_ID
-			AND @ATTR_KEY_CD = ATTR_KEY_CD
-
-
-		COMMIT TRANSACTION
-	END TRY
-	BEGIN CATCH
-		--ERROR CATCH
-		ROLLBACK TRANSACTION
-
-		SET @ERRMSG = '(' + CAST(ERROR_NUMBER() as VARCHAR(10)) + ' - ' + ERROR_MESSAGE() + ')'
-		
-		--LOG ERROR IN ACTIVIT RECORD
-		INSERT INTO dbo.AUDIT_ACTIVITY (ACT_TYP_ID, ACT_DEV_ID, ACT_DESC, REC_CRTE_USER_ID)
-		Select
-			dbo.fnc_GetActivityID('DEVICE_ERR') as ACT_TYP_ID,
-			@DEV_ID,
-			RTRIM('<<DEVICE PORT ATTR UPDATE ERROR>>  -  [DEV_NAME] - (''' + ISNULL(@DEV_NAME,'--null--') + ''')     [ERROR] - ' + 
-			'(' + ISNULL(ERROR_PROCEDURE(),'') + ') - ' + @ERRMSG
-			) as ACT_DESC,
-			isnull(@LST_UPDT_USER_ID,user_name()) as REC_CRTE_USER_ID
-
-		SET @RESULTS = 0
-	END CATCH
-
-return (@RESULTS)
-GO
-
-
+/** csp_ADD_Device_EXT_Attr  (NOT USED CURRENTLY)
 CREATE OR ALTER PROCEDURE [dbo].[csp_ADD_Device_EXT_Attr]
 	@DEV_ID			INT,
 	@LO_ID			INT,
@@ -2437,91 +3011,14 @@ BEGIN TRANSACTION
 	END CATCH
 
 return(@RESULTS)
+*/
 GO
 
 
-CREATE OR ALTER PROCEDURE [dbo].[csp_UPDATE_Device_EXT_Attr]
-	@DEV_ID			INT,
-	@LO_ID			INT,
-	@ATTR_KEY_CD	CHAR(8) = null, 
-	@ATTR_VALUE     VARCHAR(255) = null,
-	@USR			VARCHAR(60) = null
-AS
-SET NOCOUNT ON
-------------------------------------------------------------------------------------------------------------------
--- AUTHOR : Thomas Wallace		   DATE: 10/07/2020
--- PURPOSE: Handles 
-------------------------------------------------------------------------------------------------------------------
--- UPDATES:	
--- 10/07/2020 - TCW - Intial Creationg of csp_UPDATE_Device_Port_Attr
-------------------------------------------------------------------------------------------------------------------
-DECLARE @ERRMSG as varchar(2048)
-DECLARE @MSG as varchar(2048)
-DECLARE @LST_UPDT_USER_ID as varchar(60)
-DECLARE @DEV_NAME varchar(100)
-DECLARE @RESULTS int = 1
-
-BEGIN TRANSACTION 
-	--SET USER ID FOR TRANSACTION
-	IF (@USR is not null)
-		SET @LST_UPDT_USER_ID = @USR
-	else
-		SET @LST_UPDT_USER_ID = USER_NAME()
-
-	BEGIN TRY
-		--CHECK FOR VALID DEVICE ID (SHOULD NEVER HAPPEN BUT SAFEGAURD CHECK)
-		IF (@DEV_ID = 0) OR NOT EXISTS(SELECT DEV_ID from dbo.DEVICES WITH (NOLOCK) WHERE DEV_ID=@DEV_ID) BEGIN 
-			SET @MSG = 'Invalid Device ID Provided. (DEV_ID=' + CAST(@DEV_ID as varchar(10)) + ' - NOT VALID!)'
-			RAISERROR (@MSG,15,1) 
-		END 
-		ELSE BEGIN
-			--IF DEVICE EXISTS THEN GET NAME OF DEVICE (FOR AUDIT REASONS)
-			SELECT @DEV_NAME = DEV_NAME from dbo.DEVICES WITH (NOLOCK) WHERE DEV_ID=@DEV_ID
-		END
-
-		--CHECK FOR VALID LAYOUT ID (SHOULD NEVER HAPPEN BUT SAFEGAURD CHECK)
-		IF (@LO_ID = 0) OR NOT EXISTS(SELECT LO_ID from dbo.LAYOUTS WITH (NOLOCK) WHERE LO_ID=@LO_ID) BEGIN 
-			SET @MSG = 'Invalid Layout ID Provided. (LO_ID=' + CAST(@LO_ID as varchar(10)) + ' - NOT VALID!)'
-			RAISERROR (@MSG,15,1) 
-		END
-
-		--BUILD DEVICE EXT ATTR RECORD
-		UPDATE dbo.DEVICE_EXT_ATTR SET 
-			ATTR_VALUE = dbo.fnc_StripSpcChars(@ATTR_VALUE)
-			,LST_UPDT_TS = GetDate()
-			,LST_UPDT_USER_ID = @LST_UPDT_USER_ID
-		WHERE
-			@LO_ID = LO_ID
-			AND @DEV_ID = DEV_ID
-			AND @ATTR_KEY_CD = ATTR_KEY_CD
-
-
-		COMMIT TRANSACTION
-	END TRY
-	BEGIN CATCH
-		--ERROR CATCH
-		ROLLBACK TRANSACTION
-
-		SET @ERRMSG = '(' + CAST(ERROR_NUMBER() as VARCHAR(10)) + ' - ' + ERROR_MESSAGE() + ')'
-		
-		--LOG ERROR IN ACTIVIT RECORD
-		INSERT INTO dbo.AUDIT_ACTIVITY (ACT_TYP_ID, ACT_DEV_ID, ACT_DESC, REC_CRTE_USER_ID)
-		Select
-			dbo.fnc_GetActivityID('DEVICE_ERR') as ACT_TYP_ID,
-			@DEV_ID,
-			RTRIM('<<DEVICE EXT ATTR UPDATE ERROR>>  -  [DEV_NAME] - (''' + ISNULL(@DEV_NAME,'--null--') + ''')     [ERROR] - ' + 
-			'(' + ISNULL(ERROR_PROCEDURE(),'') + ') - ' + @ERRMSG
-			) as ACT_DESC,
-			isnull(@LST_UPDT_USER_ID,user_name()) as REC_CRTE_USER_ID
-		
-		SET @RESULTS = 0
-
-	END CATCH
-
-return(@RESULTS)
-GO
-
-
---GRANT EXECUTION OF THE PROCEDURE 
---GRANT EXECUTE ON [dbo].[csp_ADD_Device] TO [db_executor] AS [dbo]
---GO
+--======================================================
+-- GRANT EXECUTIONS FOR PROCEDURES SECION (IF NEEDED)
+--======================================================
+/* EXAMPLE BELOW:
+	GRANT EXECUTE ON [dbo].[csp_ADD_Device] TO [db_executor] AS [dbo]
+	GO
+*/

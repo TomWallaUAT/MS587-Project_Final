@@ -1,4 +1,13 @@
-﻿html, body {
+﻿html {
+    left: 0px;
+    top: 0px;
+    height: 100%;
+    margin: 0;
+    background-size: cover;
+    background-color: #585891;
+    background-image: linear-gradient(to bottom right, white, #585891);
+}
+body {
     height: 100%;
     margin: 0;
 }
@@ -8,20 +17,57 @@
     width: 100%;
     left: 0px;
     top: 0px;
-    background-color: #585891;
-    background-image: linear-gradient(to bottom right, white, #585891);
     vertical-align: middle;
     align-content: center;
     align-items: center;
+    z-index: 0;
+}
+#logoTitleBar {
+    border: none;
+    position: absolute;
+    height: 40px;
+    width: 100%;
+    top: 0px;
+    z-index: 1;
+    background-color: #ABD9FC;
+    font-size: 14px;
+    color: #000000;
+}
+#TitleBarTxt {
+    border: none;
+    position: absolute;
+    top: -12px;
+    left: 300px;
+    z-index: 1;
+    font-size: 20px;
+    font-weight: bold;
+    color: #000000;
+    /*color: #3939DF;*/
+    text-shadow: 4px 4px 4px #666666;
 }
 #logobg {
     position: absolute;
     top: -100px;
     left: -120px;
     opacity: 1;
+    z-index: 2;
+}
+.lblTxt280 {
+    font-size: 18px;
+    padding: 7px;
+    color: #444444;
+    opacity: 0.2;
+    z-index: 1;
+    width: 280PX;
+}
+.lblFldTxt {
+    font-size: 18px;
+    padding: 7px;
+    color: #000000;
+    opacity: 1;
     z-index: 1;
 }
-.inputTxt200 {
+.inputTxt280 {
     -moz-border-radius: 10px;
     border-radius: 10px;
     border: solid 2px #EACACA;
@@ -31,7 +77,46 @@
     color: #D9C7C7;
     opacity: .5;
     z-index: 1;
-    width: 260PX;
+    width: 295PX;
+    box-shadow: inset 0px 0px 3px 3px rgba(100,100,100,.1);
+}
+.inputTxt280A {
+    -moz-border-radius: 10px;
+    border-radius: 10px;
+    border: solid 2px #EACACA;
+    font-size: 16px;
+    padding: 7px;
+    background-color: white;
+    color: #222244;
+    opacity: .5;
+    z-index: 1;
+    width: 295PX;
+    box-shadow: inset 0px 0px 3px 3px rgba(100,100,100,.1);
+}
+.inputDDLSQ {
+    -moz-border-radius: 10px;
+    border-radius: 10px;
+    border: solid 2px #EACACA;
+    font-size: 16px;
+    padding: 7px;
+    background-color: white;
+    color: #222244;
+    opacity: .5;
+    z-index: 1;
+    width: 450px;
+    box-shadow: inset 0px 0px 3px 3px rgba(100,100,100,.1);
+}
+.inputTxtNS {
+    -moz-border-radius: 10px;
+    -webkit-appearance: none;
+    border-radius: 10px;
+    border: solid 2px #EACACA;
+    font-size: 16px;
+    padding: 7px;
+    background-color: white;
+    color: #222244;
+    opacity: .5;
+    z-index: 1;
     box-shadow: inset 0px 0px 3px 3px rgba(100,100,100,.1);
 }
 .inputTxt200A {
@@ -44,10 +129,9 @@
     color: #222244;
     opacity: .5;
     z-index: 1;
-    width: 260PX;
+    width: 200PX;
     box-shadow: inset 0px 0px 3px 3px rgba(100,100,100,.1);
 }
-
 .inputBtn {
     -moz-border-radius: 10px;
     border-radius: 10px;
@@ -75,34 +159,67 @@
     z-index: 1;
 }
 #errMsg {
+    color: #cc4444;
     font-size: 16px;
     font-weight: bold;
-    color: #cc4444;
 }
-table {
+.LoginTable {
     /*border: 1px solid black;*/
     border: none;
     margin: auto;
     height: 150px;
+    width: 360px;
+    table-layout: fixed;
+}
+.CATable {
+    /*border: 1px solid Yellow;*/
+    border: none;
+    /*width: 600px;*/
+    table-layout: fixed;
+    margin: auto;
 }
 th {
+    /*border: 1px solid yellow;*/
+    border: none;
     font-size: 20px;
     color: #3939DF;
     text-shadow: 4px 4px 4px #888;
 }
-#content {
+td {
+    /*border: 1px solid yellow;*/
+    border: none;
+}
+#contentLP {
+    border: none;
     position: absolute;
     top: 50%;
     left: 50%;
-    transform: translate(-40%, -50%);
+    transform: translate(-50%, -50%);
+}
+#contentCA {
+    /*border: solid 2px #0000ff;*/
+    border: none;
+    position: absolute;
+    top: 60px;
+    left: 60px;
+}
+#cntPwd {
+    /*border: 1px solid yellow;*/
+    border: none;
+    position: absolute;
+    top: 122px;
+    left: 58px;
 }
 #pLoginTxt {
     color: #666666;
     font-family:Batang;
 }
+image {
+    border: none;
+}
 a:link, a:visited, a:after  {
     color: blue;
 }
 a:hover {
-    color: #ccccaa;
+    color: #DDFF00;
 }
